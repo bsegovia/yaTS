@@ -16,7 +16,7 @@ namespace pf
   void  alignedFree(void* ptr);
 
   /*! Used to count memory allocations */
-#if DEBUG_MEMORY
+#if PF_DEBUG_MEMORY
   void* insertAlloc(void*, const char*, const char*, int);
   void  removeAlloc(void *ptr);
   void  dumpAlloc(void);
@@ -28,7 +28,7 @@ namespace pf
   INLINE void  dumpAlloc(void) {}
   INLINE void  startMemoryDebugger(void) {}
   INLINE void  endMemoryDebugger(void) {}
-#endif /* DEBUG_MEMORY */
+#endif /* PF_DEBUG_MEMORY */
 
   /*! Properly handle the allocated type */
   template <typename T>

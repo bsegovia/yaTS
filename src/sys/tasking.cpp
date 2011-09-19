@@ -198,6 +198,8 @@ namespace pf {
     // be picked up again to completely end the task set. This basically may
     // slightly delay the ending of it (note that much since we enqueue /
     // dequeue in LIFO style here)
+    // Also, note that we reenqueue the task twice since it allows an
+    // exponential propagation of the task sets in the other thread queues
     if (this->elemNum > 1) {
       this->toEnd += 2;
       scheduler->schedule(*this);
@@ -212,7 +214,7 @@ namespace pf {
 
   void startTaskingSystem(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
-    scheduler = NEW(TaskScheduler, 2);
+    scheduler = NEW(TaskScheduler);
   }
 
   void enterTaskingSystem(void) {

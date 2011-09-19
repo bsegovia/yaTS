@@ -4,6 +4,15 @@
 #include "sys/mutex.hpp"
 #include "sys/sysinfo.hpp"
 
+#define START_UTEST(TEST_NAME)                          \
+void TEST_NAME(void)                                    \
+{                                                       \
+  std::cout << "starting " << #TEST_NAME << std::endl;
+
+#define END_UTEST(TEST_NAME)                            \
+  std::cout << "ending " << #TEST_NAME << std::endl;    \
+}
+
 using namespace pf;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -23,8 +32,7 @@ public:
   virtual void run(void) { shutdownTaskingSystem(); }
 };
 
-void dummyTest(void)
-{
+START_UTEST(dummyTest)
   startTaskingSystem();
   Task *done = NEW(DoneTask);
   Task *nothing = NEW(NothingTask, NULL, done);
@@ -32,7 +40,7 @@ void dummyTest(void)
   nothing->done();
   enterTaskingSystem();
   endTaskingSytem();
-}
+END_UTEST(dummyTest)
 
 ///////////////////////////////////////////////////////////////////////////////
 // Simplest taskset test. An array is filled by each worker
@@ -47,8 +55,7 @@ public:
   uint32 *array;
 };
 
-void taskSetTest(void)
-{
+START_UTEST(taskSetTest)
   const size_t elemNum = 1024;
   startTaskingSystem();
   uint32 *array = NEW_ARRAY(uint32, elemNum);
@@ -62,14 +69,14 @@ void taskSetTest(void)
   for (size_t i = 0; i < elemNum; ++i)
     FATAL_IF(array[i] == 0, "taskSetTest failed");
   DELETE_ARRAY(array);
-}
+END_UTEST(taskSetTest)
 
 ///////////////////////////////////////////////////////////////////////////////
 // We create a binary tree of tasks here. Each task spawn a two children upto a
 // given maximum level. Then, a atomic value is updated per leaf. In that test,
 // all tasks complete the ROOT directly
 ///////////////////////////////////////////////////////////////////////////////
-enum { maxLevel = 10u };
+enum { maxLevel = 20u };
 
 /*! One node task per node in the tree. Task completes the root */
 class NodeTask : public Task {
@@ -123,8 +130,9 @@ void CascadeNodeTask::run(void) {
 
 /*! For both tests */
 template<typename NodeType>
-void treeTest(void)
-{
+START_UTEST(treeTest)
+  std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
+  double t = getSeconds();
   startTaskingSystem();
   Atomic value(0u);
   Task *done = NEW(DoneTask);
@@ -133,17 +141,16 @@ void treeTest(void)
   root->done();
   enterTaskingSystem();
   endTaskingSytem();
+  std::cout << (getSeconds() - t) * 1000. << " ms" << std::endl;
   FATAL_IF(value != (1 << maxLevel), "treeTest failed");
-}
+END_UTEST(treeTest)
 
 int main(int argc, char **argv)
 {
   startMemoryDebugger();
-#if 0
   dummyTest();
   treeTest<NodeTask>();
   treeTest<CascadeNodeTask>();
-#endif
   taskSetTest();
   endMemoryDebugger();
   return 0;

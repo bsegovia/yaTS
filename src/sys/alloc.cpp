@@ -14,7 +14,7 @@ namespace pf
   /*! Count the still unfreed allocations */
   static Atomic unfreedNum(0);
 
-#if DEBUG_MEMORY
+#if PF_DEBUG_MEMORY
   /*! Store each allocation data */
   struct AllocData {
     INLINE AllocData(void) {}
@@ -111,7 +111,7 @@ namespace pf
     memoryDebugger = NULL;
     delete _debug;
   }
-#endif /* DEBUG_MEMORY */
+#endif /* PF_DEBUG_MEMORY */
 }
 
 namespace pf
@@ -138,7 +138,7 @@ namespace pf
 /// Windows Platform
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef _WIN32
+#ifdef __WIN32__
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
