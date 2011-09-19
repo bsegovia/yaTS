@@ -12,7 +12,7 @@ namespace pf {
   public:
 
     /*! It can complete one task and can be continued by one other task */
-    Task(Task *completion_ = NULL, Task *continuation_ = NULL);
+    Task(Task *completion = NULL, Task *continuation = NULL);
 
     /*! Now the task is built and immutable */
     void done(void);

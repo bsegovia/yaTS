@@ -142,26 +142,24 @@ namespace pf {
 
       // Execute the function
       task->run();
-      // The run is one dependency to finish
-      const atomic_t stillRunning = task->toEnd--;
 
-      // We are done here
-      if (stillRunning == 0) {
-        // Run the continuation if any
-        if (task->continuation) {
-          task->continuation->toStart--;
-          if (task->continuation->toStart == 0)
-            This->schedule(*task->continuation);
+      // Explore the completions and runs all continuations if any
+      while (task) {
+        const atomic_t stillRunning = --task->toEnd;
+
+        // We are done here
+        if (stillRunning == 0) {
+          // Run the continuation if any
+          if (task->continuation) {
+            task->continuation->toStart--;
+            if (task->continuation->toStart == 0)
+              This->schedule(*task->continuation);
+          }
+          // Traverse all completions to signal we are done
+          task = task->completion;
         }
-        // Traverse all completions to signal we are done
-        Ref<Task> completion = task->completion;
-        while (completion) {
-          completion->toEnd--;
-          if (completion->toEnd == 0)
-            completion = completion->completion;
-          else
-            completion = NULL;
-        }
+        else
+          task = NULL;
       }
     }
     DELETE(thread);
