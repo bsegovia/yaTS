@@ -186,6 +186,9 @@ namespace pf {
     if (completion) completion->toEnd++;
   }
 
+  TaskSet::TaskSet(size_t elemNum_, Task *completion, Task *continuation) :
+    Task(completion, continuation), elemNum(elemNum_) { }
+
   void TaskSet::run(void)
   {
     // The basic idea with task sets is to reschedule the task in its own
@@ -203,6 +206,8 @@ namespace pf {
       while ((curr = --this->elemNum) >= 0)
         this->run(curr);
     }
+    else if (--this->elemNum == 0)
+      this->run(0);
   }
 
   void startTaskingSystem(void) {
