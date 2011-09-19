@@ -147,6 +147,7 @@ END_UTEST(treeTest)
 
 int main(int argc, char **argv)
 {
+  std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
   dummyTest();
   treeTest<NodeTask>();

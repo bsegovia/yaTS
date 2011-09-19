@@ -72,10 +72,10 @@ namespace pf
     /// Properties
     ////////////////////////////////////////////////////////////////////////////////
 
-    INLINE const Type& operator  *( void ) const { return *ptr; }
-    INLINE       Type& operator  *( void )       { return *ptr; }
-    INLINE const Type* operator ->( void ) const { return  ptr; }
-    INLINE       Type* operator ->( void )       { return  ptr; }
+    INLINE const Type& operator*  (void) const { return *ptr; }
+    INLINE const Type* operator-> (void) const { return  ptr; }
+    INLINE Type& operator*  (void) { return *ptr; }
+    INLINE Type* operator-> (void) { return  ptr; }
 
     template<typename TypeOut>
     INLINE       Ref<TypeOut> cast()       { return Ref<TypeOut>(static_cast<TypeOut*>(ptr)); }

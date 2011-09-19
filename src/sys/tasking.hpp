@@ -9,8 +9,8 @@ namespace pf {
   /*! Interface for all tasks handled by the tasking system */
   class Task : public RefCount
   {
+    ALIGNED_CLASS
   public:
-
     /*! It can complete one task and can be continued by one other task */
     Task(Task *completion = NULL, Task *continuation = NULL);
 
@@ -27,6 +27,7 @@ namespace pf {
     Ref<Task> continuation;     //!< Triggers it when ready
     Atomic toStart;             //!< MBZ before starting
     Atomic toEnd;               //!< MBZ before ending
+    uint32_t size;              //!< Own size of the structure (for fast deallocation)
   };
 
   /*! Allow the run function to be executed several times */

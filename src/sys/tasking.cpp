@@ -4,6 +4,8 @@
 #include "sys/mutex.hpp"
 #include "sys/sysinfo.hpp"
 
+#include <vector>
+
 namespace pf {
 
   /*! Structure used for work stealing */
@@ -85,6 +87,62 @@ namespace pf {
     volatile bool dead;           //!< The tasking system should quit
   };
 
+#if 0
+  /*! Allocator per thread */
+  struct ThreadStorage {
+    ThreadStorage(void) {
+      for (size_t i = 0; i < maxHeap; ++i) {
+        this->data[i] = NULL;
+        this->maxNum[i] = chunkSize / (1 << i);
+        this->curr[i] = 0;
+      }
+    }
+    ~ThreadStorage(void) {
+      // TODO free the local heaps
+    }
+    enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
+    enum { chunkSize = 4 * KB }; //!< 4KB when taking memory from std
+    void *data[maxHeap];         //!< One heap per size
+    uint32_t maxNum[maxHeap];    //!< Maximum number of task in the heap
+    uint32_t curr[maxHeap];      //!< Current number of free tasks in the heap
+    std::vector<void*> toFree;   //!< All chunks allocated (per thread)
+  };
+
+  /*! TaskAllocator will speed up task allocation with fast dedicated thread
+   *  local storage and fixed size allocation strategy. Each thread maintains
+   *  its own list of free tasks. When empty, it first tries to get some tasks
+   *  from the global task heap. If the global heap is empty, it just allocates
+   *  a new pool of task with a std::malloc. If the local pool is "full", a
+   *  chunk of tasks is pushed back into the global heap. Note that the task
+   *  allocator is really a growing pool. We *never* give back the chunk of
+   *  memory taken from std::malloc (except when the allocator is destroyed)
+   */
+  class TaskAllocator {
+  public:
+    /*! Constructor. Here this is the total number of threads using the pool (ie
+     *  number of worker threads + main thread)
+     */
+    TaskAllocator(int threadNum);
+    ~TaskAllocator(void);
+    void *allocate(size_t sz);
+    void deallocate(void *ptr, size_t sz);
+  private:
+    ThreadStorage *local;                  //!< Local heaps (per thread and per size)
+    void *global[ThreadStorage::maxHeap]; //!< Global heap shared by all threads
+    MutexActive mutex;                    //!< To protect the global heap
+  };
+
+  TaskAllocator::TaskAllocator(int threadNum)
+  {
+    this->local =  NEW_ARRAY(ThreadStorage, threadNum);
+    for (size_t i = 0; i < maxHeap; ++i) this->global[i] = NULL;
+  }
+
+  TaskAllocator::allocate(size_t sz)
+  {
+    sz = nex
+  }
+#endif
   TaskScheduler::TaskScheduler(int threadNum_) :
     queues(NULL), threads(NULL), dead(false)
   {
@@ -144,7 +202,7 @@ namespace pf {
       task->run();
 
       // Explore the completions and runs all continuations if any
-      while (task) {
+      do {
         const atomic_t stillRunning = --task->toEnd;
 
         // We are done here
@@ -160,7 +218,7 @@ namespace pf {
         }
         else
           task = NULL;
-      }
+      } while (task);
     }
     DELETE(thread);
   }
