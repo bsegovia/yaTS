@@ -101,6 +101,9 @@
 /// Makros
 ////////////////////////////////////////////////////////////////////////////////
 
+/*! Modern x86 processors */
+#define CACHE_LINE 64
+
 #ifdef __WIN32__
 #define __dllexport extern "C" __declspec(dllexport)
 #define __dllimport extern "C" __declspec(dllimport)
@@ -249,6 +252,37 @@ namespace pf
   INLINE bool  select(bool s, bool  t , bool f) { return s ? t : f; }
   INLINE int   select(bool s, int   t,   int f) { return s ? t : f; }
   INLINE float select(bool s, float t, float f) { return s ? t : f; }
+
+  /*! Return the next power of 2 */
+  INLINE uint32 nextHighestPowerOf2(uint32 x) {
+    x--;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    return ++x;
+  }
+
+  INLINE uint32 logi2(uint32 x) {
+    uint32 r = 0;
+    while(x >>= 1) r++;
+    return r;
+  }
+
+  template<uint32 N> INLINE uint32
+  isPowerOf(uint32 i) {
+    while (i > 1) {
+      if (i%N) return false;
+      i = i/N;
+    }
+    return true;
+  }
+
+  template<> INLINE uint32
+  isPowerOf<2>(uint32 i) {
+    return ((i - 1) & i) == 0;
+  }
 
 #define ALIGNED_CLASS                                             \
 public:                                                           \

@@ -174,7 +174,7 @@ namespace pf
 namespace pf
 {
   void* alignedMalloc(size_t size, size_t align) {
-    void* ptr = memalign(64,size);
+    void* ptr = memalign(align,size);
     unfreedNum++;
     FATAL_IF (!ptr && size, "memory allocation failed");
     return ptr;

@@ -27,14 +27,12 @@ namespace pf {
     Ref<Task> continuation;     //!< Triggers it when ready
     Atomic toStart;             //!< MBZ before starting
     Atomic toEnd;               //!< MBZ before ending
-    uint32_t size;              //!< Own size of the structure (for fast deallocation)
   };
 
   /*! Allow the run function to be executed several times */
   class TaskSet : public Task
   {
   public:
-
     /*! As for Task, it has both completion and continuation */
     TaskSet(size_t elemNum, Task *completion = NULL, Task *continuation = NULL);
 

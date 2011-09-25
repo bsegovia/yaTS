@@ -7,6 +7,9 @@
 #include <vector>
 
 namespace pf {
+  class Task;         // Basically an asynchronous function with dependencies
+  class TaskSet;      // Idem but can be run N times
+  class TaskAllocator;// Dedicated to allocate tasks and task sets
 
   /*! Structure used for work stealing */
   template <int elemNum>
@@ -57,9 +60,10 @@ namespace pf {
 
     /*! Call by the main thread to enter the tasking system */
     void go(void);
-
     /*! Interrupt all threads */
     INLINE void die(void) { dead = true; }
+    /*! Number of threads running in the scheduler (not including main) */
+    INLINE uint32 getThreadNum(void) { return this->threadNum; }
 
     /*! Data provided to each thread */
     struct Thread {
@@ -76,8 +80,9 @@ namespace pf {
     /*! Schedule a task which is now ready to execute */
     void schedule(Task &task);
 
-    friend class Task;            //!< Only tasks ...
-    friend class TaskSet;         //   ... and task sets use the tasking system
+    friend class Task;            //!< Tasks ...
+    friend class TaskSet;         // ... task sets ...
+    friend class TaskAllocator;   // ... task allocator use the tasking system
     static THREAD uint32 threadID;//!< ThreadID for each thread
     enum { queueSize = 2048 };    //!< Number of task per queue
     TaskQueue<queueSize> *queues; //!< One queue per thread
@@ -87,24 +92,44 @@ namespace pf {
     volatile bool dead;           //!< The tasking system should quit
   };
 
-#if 0
+#if 1
   /*! Allocator per thread */
-  struct ThreadStorage {
-    ThreadStorage(void) {
+  class ThreadStorage
+  {
+  public:
+    ThreadStorage(void) : allocator(NULL) {
       for (size_t i = 0; i < maxHeap; ++i) {
-        this->data[i] = NULL;
-        this->maxNum[i] = chunkSize / (1 << i);
-        this->curr[i] = 0;
+        this->chunk[i] = NULL;
+        this->currSize[i] = 0u;
       }
     }
     ~ThreadStorage(void) {
       // TODO free the local heaps
     }
+
+    /*! Will try to allocate from the local storage. Use std::malloc to
+     *  allocate a new local chunk
+     */
+    INLINE void *allocate(size_t sz);
+
+    /*! Free a task and put it in a free list. If too many tasks are
+     *  deallocated, return a piece of it to the global heap
+     */
+    INLINE void deallocate(void *ptr);
+
+    /*! Create a free list and store chunk information */
+    void newChunk(uint32 chunkID);
+    /*! Push back a group of tasks in the global heap */
+    void pushGlobal(uint32 chunkID);
+
+  private:
+    friend class TaskAllocator;
+    enum { logChunkSize = 12 };           //!< log2(4KB)
+    enum { chunkSize = 1<< logChunkSize}; //!< 4KB when taking memory from std
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
-    enum { chunkSize = 4 * KB }; //!< 4KB when taking memory from std
-    void *data[maxHeap];         //!< One heap per size
-    uint32_t maxNum[maxHeap];    //!< Maximum number of task in the heap
-    uint32_t curr[maxHeap];      //!< Current number of free tasks in the heap
+    TaskAllocator *allocator;    //!< Handles global heap
+    void *chunk[maxHeap];        //!< One heap per size
+    uint32_t currSize[maxHeap];  //!< Sum of the free task sizes
     std::vector<void*> toFree;   //!< All chunks allocated (per thread)
   };
 
@@ -122,25 +147,89 @@ namespace pf {
     /*! Constructor. Here this is the total number of threads using the pool (ie
      *  number of worker threads + main thread)
      */
-    TaskAllocator(int threadNum);
+    TaskAllocator(uint32 threadNum);
     ~TaskAllocator(void);
     void *allocate(size_t sz);
-    void deallocate(void *ptr, size_t sz);
-  private:
-    ThreadStorage *local;                  //!< Local heaps (per thread and per size)
-    void *global[ThreadStorage::maxHeap]; //!< Global heap shared by all threads
-    MutexActive mutex;                    //!< To protect the global heap
+    void deallocate(void *ptr);
+    enum { maxHeap = ThreadStorage::maxHeap };
+    enum { maxSize = 1 << maxHeap };
+    ThreadStorage *local;  //!< Local heaps (per thread and per size)
+    void *global[maxHeap]; //!< Global heap shared by all threads
+    MutexActive mutex;     //!< To protect the global heap
   };
 
-  TaskAllocator::TaskAllocator(int threadNum)
-  {
-    this->local =  NEW_ARRAY(ThreadStorage, threadNum);
+  TaskAllocator::TaskAllocator(uint32 threadNum) {
+    this->local = NEW_ARRAY(ThreadStorage, threadNum);
+    for (size_t i = 0; i < threadNum; ++i) this->local[i].allocator = this;
     for (size_t i = 0; i < maxHeap; ++i) this->global[i] = NULL;
   }
+  TaskAllocator::~TaskAllocator(void) { DELETE_ARRAY(this->local); }
 
-  TaskAllocator::allocate(size_t sz)
-  {
-    sz = nex
+  void *TaskAllocator::allocate(size_t sz) {
+    FATAL_IF (sz > maxSize, "Task size is too large (TODO remove that)");
+    return this->local[TaskScheduler::threadID].allocate(sz);
+  }
+
+  void TaskAllocator::deallocate(void *ptr) {
+    return this->local[TaskScheduler::threadID].deallocate(ptr);
+  }
+
+  void ThreadStorage::newChunk(uint32 chunkID) {
+    // We store the size of the elements in the chunk header
+    const uint32 elemSize = 1 << chunkID;
+    char *chunk = (char *) ALIGNED_MALLOC(chunkSize, chunkSize);
+
+    // We store this pointer to free it later while deleting the task
+    // allocator
+    this->toFree.push_back(chunk);
+    *(uint32 *) chunk = elemSize;
+
+    // Fill the free list here
+    this->currSize[chunkID] = elemSize;
+    char *data = (char*) chunk + CACHE_LINE;
+    const char *end = (char*) chunk + chunkSize;
+    *(void**) data = NULL; // Last element of the list is the first in chunk
+    void *pred = data;
+    data += elemSize;
+    while (data < end) {
+      *(void**) data = pred;
+      pred = data;
+      data += elemSize;
+      this->currSize[chunkID] += elemSize;
+    }
+    this->chunk[chunkID] = pred;
+  }
+
+  void ThreadStorage::pushGlobal(uint32 chunkID) {
+
+
+  }
+
+  void* ThreadStorage::allocate(size_t sz) {
+    const uint32 chunkID = __bsf(int(nextHighestPowerOf2(uint32(sz))));
+    if (UNLIKELY(this->chunk[chunkID] == NULL))
+      this->newChunk(chunkID);
+    void *curr = this->chunk[chunkID];
+    this->chunk[chunkID] = *(void**) curr; // points to its predecessor
+    this->currSize[chunkID] -= 1 << chunkID;
+    return curr;
+  }
+
+  void ThreadStorage::deallocate(void *ptr) {
+    // Figure out with the chunk header the size of this element
+    char *chunk = (char*) (uintptr_t(ptr) & ~((1<<logChunkSize)-1));
+    const uint32 elemSize = *(uint32*) chunk;
+    const uint32 chunkID = __bsf(int(nextHighestPowerOf2(uint32(elemSize))));
+
+    // Insert the free element in the free list
+    void *succ = this->chunk[chunkID];
+    *(void**) ptr = succ;
+    this->chunk[chunkID] = ptr;
+    this->currSize[chunkID] += elemSize;
+
+    // If this thread has too many free tasks, we give some to the global heap
+    if (this->currSize[chunkID] > 2 * chunkSize)
+      this->pushGlobal(chunkID);
   }
 #endif
   TaskScheduler::TaskScheduler(int threadNum_) :
@@ -229,6 +318,7 @@ namespace pf {
   }
 
   static TaskScheduler *scheduler = NULL;
+  static TaskAllocator *allocator = NULL;
 
   void Task::done(void) {
     this->toStart--;
@@ -273,6 +363,11 @@ namespace pf {
   void startTaskingSystem(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
     scheduler = NEW(TaskScheduler);
+#if 0
+    allocator = NEW(TaskAllocator, scheduler->getThreadNum()+1);
+    void *ptr = allocator->allocate(CACHE_LINE);
+    allocator->deallocate(ptr);
+#endif
   }
 
   void enterTaskingSystem(void) {
@@ -282,7 +377,9 @@ namespace pf {
 
   void endTaskingSytem(void) {
     SAFE_DELETE(scheduler);
+    SAFE_DELETE(allocator);
     scheduler = NULL;
+    allocator = NULL;
   }
 
   void shutdownTaskingSystem(void) {
