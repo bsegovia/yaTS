@@ -43,8 +43,7 @@ namespace pf
 
   void* MemoryDebugger::insertAlloc(void *ptr, const char *file, const char *function, int line)
   {
-    if (ptr == NULL)
-      return ptr;
+    if (ptr == NULL) return ptr;
     Lock<MutexSys> lock(mutex);
     const uintptr_t iptr = (uintptr_t) ptr;
     FATAL_IF(allocMap.find(iptr) != allocMap.end(), "Pointer already in map");
@@ -117,20 +116,15 @@ namespace pf
 namespace pf
 {
   void* malloc(size_t size) {
-    unfreedNum++;
     return std::malloc(size);
   }
 
   void* realloc(void *ptr, size_t size) {
-    if (ptr == NULL) unfreedNum++;
     return std::realloc(ptr, size);
   }
 
   void free(void *ptr) {
-    if (ptr != NULL) {
-      unfreedNum--;
-      std::free(ptr);
-    }
+    if (ptr != NULL) std::free(ptr);
   }
 }
 
@@ -148,12 +142,10 @@ namespace pf
   void* alignedMalloc(size_t size, size_t align) {
     void* ptr = _mm_malloc(size,align);
     FATAL_IF (!ptr && size, "memory allocation failed");
-    unfreedNum++;
     return ptr;
   }
 
   void alignedFree(void *ptr) {
-    if (ptr) unfreedNum--;
     _mm_free(ptr);
   }
 }
@@ -175,13 +167,11 @@ namespace pf
 {
   void* alignedMalloc(size_t size, size_t align) {
     void* ptr = memalign(align,size);
-    unfreedNum++;
     FATAL_IF (!ptr && size, "memory allocation failed");
     return ptr;
   }
 
   void alignedFree(void *ptr) {
-    if (ptr) unfreedNum--;
     free(ptr);
   }
 }

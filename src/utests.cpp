@@ -29,7 +29,7 @@ class DoneTask : public Task {
 public:
   INLINE DoneTask(Task *completion = NULL, Task *continuation = NULL) :
     Task(completion, continuation) {}
-  virtual void run(void) { shutdownTaskingSystem(); }
+  virtual void run(void) { interruptTaskingSystem(); }
 };
 
 START_UTEST(dummyTest)
@@ -56,7 +56,7 @@ public:
 };
 
 START_UTEST(taskSetTest)
-  const size_t elemNum = 1024;
+  const size_t elemNum = 1 << 20;
   startTaskingSystem();
   uint32 *array = NEW_ARRAY(uint32, elemNum);
   for (size_t i = 0; i < elemNum; ++i) array[i] = 0;
@@ -131,17 +131,18 @@ void CascadeNodeTask::run(void) {
 /*! For both tests */
 template<typename NodeType>
 START_UTEST(treeTest)
-  std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
-  double t = getSeconds();
   startTaskingSystem();
   Atomic value(0u);
+  std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
+  double t = getSeconds();
   Task *done = NEW(DoneTask);
   Task *root = NEW(NodeType, value, 0, NULL, done);
   done->done();
   root->done();
   enterTaskingSystem();
+  t = getSeconds() - t;
+  std::cout << t * 1000. << " ms" << std::endl;
   endTaskingSytem();
-  std::cout << (getSeconds() - t) * 1000. << " ms" << std::endl;
   FATAL_IF(value != (1 << maxLevel), "treeTest failed");
 END_UTEST(treeTest)
 
@@ -149,10 +150,13 @@ int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
-  dummyTest();
+//  dummyTest();
+#if 1
   treeTest<NodeTask>();
   treeTest<CascadeNodeTask>();
-  taskSetTest();
+//  taskSetTest();
+#endif
+  dumpAlloc();
   endMemoryDebugger();
   return 0;
 }

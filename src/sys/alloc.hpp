@@ -45,8 +45,8 @@ namespace pf
 #define MALLOC(SZ)         insertAlloc(malloc(SZ),__FILE__, __FUNCTION__, __LINE__)
 #define REALLOC(X,SZ)      do { assert(0); FATAL("unsupported macro"); } while (0)
 #define FREE(X)            do { removeAlloc(X); free(X); } while (0)
+#define ALIGNED_FREE(X)    do { removeAlloc(X); alignedFree(X); } while (0)
 #define ALIGNED_MALLOC(SZ,ALIGN) insertAlloc(alignedMalloc(SZ,ALIGN),__FILE__, __FUNCTION__, __LINE__)
-#define ALIGNED_FREE(X)          do { alignedFree(X); free(X); } while (0)
 }
 
 #endif /* __PF_ALLOC_HPP__ */

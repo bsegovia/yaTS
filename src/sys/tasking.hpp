@@ -4,6 +4,8 @@
 #include "sys/ref.hpp"
 #include "sys/atomic.hpp"
 
+#define PF_TASK_USE_DEDICATED_ALLOCATOR 1
+
 namespace pf {
 
   /*! Interface for all tasks handled by the tasking system */
@@ -12,12 +14,16 @@ namespace pf {
   public:
     /*! It can complete one task and can be continued by one other task */
     Task(Task *completion = NULL, Task *continuation = NULL);
-
     /*! To override while specifying a task */
     virtual void run(void) = 0;
-
     /*! Now the task is built and immutable */
     void done(void);
+#if PF_TASK_USE_DEDICATED_ALLOCATOR
+    /*! Tasks use a scalable fixed allocator */
+    void* operator new(size_t size);
+    /*! Deallocations go through the dedicated allocator too */
+    void operator delete(void* ptr);
+#endif
 
   private:
     friend class TaskSet;       //!< Will tweak the ending criterium
@@ -34,7 +40,6 @@ namespace pf {
   public:
     /*! As for Task, it has both completion and continuation */
     TaskSet(size_t elemNum, Task *completion = NULL, Task *continuation = NULL);
-
     /*! This function is user-specified */
     virtual void run(size_t elemID) = 0;
 
@@ -52,8 +57,8 @@ namespace pf {
   /*! Cleanly deallocate and shutdown everything (MAIN THREAD) */
   void endTaskingSytem(void);
 
-  /*! Start to shutdown the tasking system (THREAD SAFE) */
-  void shutdownTaskingSystem(void);
+  /*! Basically signal all threads to stop (THREAD SAFE) */
+  void interruptTaskingSystem(void);
 
 } /* namespace pf */
 
