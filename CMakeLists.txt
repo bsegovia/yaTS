@@ -4,6 +4,7 @@ project (PF)
 set (PF_CMAKE_DIR "${PF_SOURCE_DIR}/cmake")
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PF_CMAKE_DIR}")
 set (PF_DEBUG_MEMORY CACHE bool false)
+set (PF_USE_BLOB CACHE bool false)
 
 if (UNIX)
   set (DEF "-D")

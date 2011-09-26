@@ -1,17 +1,21 @@
 include (FindGLUT)
 include_directories (${GLUT_INCLUDE_PATH})
-set (SRC
-  utests.cpp
-  sys/filename.cpp
-  sys/library.cpp
-  sys/thread.cpp
-  sys/alloc.cpp
-  sys/tasking.cpp
-  sys/sysinfo.cpp
-  sys/mutex.cpp
-  sys/condition.cpp
-  sys/platform.cpp
-  sys/string.cpp)
+if (PF_USE_BLOB)
+  set (SRC blob.cpp)
+else (PF_USE_BLOB)
+  set (SRC
+    utests.cpp
+    sys/filename.cpp
+    sys/library.cpp
+    sys/thread.cpp
+    sys/alloc.cpp
+    sys/tasking.cpp
+    sys/sysinfo.cpp
+    sys/mutex.cpp
+    sys/condition.cpp
+    sys/platform.cpp
+    sys/string.cpp)
+endif (PF_USE_BLOB)
 include_directories (.)
 add_executable (app ${SRC})
 if (UNIX)

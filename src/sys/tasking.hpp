@@ -13,7 +13,13 @@ namespace pf {
   {
   public:
     /*! It can complete one task and can be continued by one other task */
-    Task(Task *completion = NULL, Task *continuation = NULL);
+    INLINE Task(Task *completion_, Task *continuation_) :
+      completion(completion_),
+      continuation(continuation_),
+      toStart(1), toEnd(1) {
+      if (continuation) continuation->toStart++;
+      if (completion) completion->toEnd++;
+    }
     /*! To override while specifying a task */
     virtual void run(void) = 0;
     /*! Now the task is built and immutable */

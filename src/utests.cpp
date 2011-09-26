@@ -121,8 +121,8 @@ void CascadeNodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
-    Task *left  = NEW(NodeTask, this->value, this->lvl+1, this);
-    Task *right = NEW(NodeTask, this->value, this->lvl+1, this);
+    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1, this);
+    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1, this);
     left->done();
     right->done();
   }
@@ -151,11 +151,9 @@ int main(int argc, char **argv)
   std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
   dummyTest();
-#if 1
   treeTest<NodeTask>();
   treeTest<CascadeNodeTask>();
   taskSetTest();
-#endif
   dumpAlloc();
   endMemoryDebugger();
   return 0;

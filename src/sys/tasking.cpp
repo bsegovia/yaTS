@@ -19,13 +19,13 @@
 #endif
 
 namespace pf {
-  class Task;         // Basically an asynchronous function with dependencies
-  class TaskSet;      // Idem but can be run N times
-  class TaskAllocator;// Dedicated to allocate tasks and task sets
+  class Task;          // Basically an asynchronous function with dependencies
+  class TaskSet;       // Idem but can be run N times
+  class TaskAllocator; // Dedicated to allocate tasks and task sets
 
   /*! Structure used for work stealing */
   template <int elemNum>
-  class TaskQueue
+  class ALIGNED(CACHE_LINE) TaskQueue
   {
   public:
     INLINE TaskQueue(void) :
@@ -73,6 +73,7 @@ namespace pf {
     Task* tasks[elemNum];         //!< All tasks currently stored
     volatile atomic_t head, tail; //!< Current queue property
     MutexType mutex;              //!< Not lock-free right now
+    ALIGNED_CLASS
   };
 
   /*! Handle the scheduling of all tasks. We basically implement here a
@@ -122,7 +123,7 @@ namespace pf {
   };
 
   /*! Allocator per thread */
-  class ThreadStorage
+  class ALIGNED(CACHE_LINE) ThreadStorage
   {
   public:
     ThreadStorage(void) :
@@ -136,8 +137,6 @@ namespace pf {
         this->chunk[i] = NULL;
         this->currSize[i] = 0u;
       }
-      this->newChunk(6);
-      this->newChunk(7);
     }
     ~ThreadStorage(void) {
       for (size_t i = 0; i < toFree.size(); ++i) ALIGNED_FREE(toFree[i]);
@@ -174,13 +173,14 @@ namespace pf {
 
   private:
     friend class TaskAllocator;
-    enum { logChunkSize = 20 };           //!< log2(4KB)
-    enum { chunkSize = 1<< logChunkSize}; //!< 4KB when taking memory from std
+    enum { logChunkSize = 20 };            //!< log2(4KB)
+    enum { chunkSize = 1<< logChunkSize }; //!< 4KB when taking memory from std
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
     TaskAllocator *allocator;    //!< Handles global heap
     void *chunk[maxHeap];        //!< One heap per size
     uint32_t currSize[maxHeap];  //!< Sum of the free task sizes
     std::vector<void*> toFree;   //!< All chunks allocated (per thread)
+    ALIGNED_CLASS
   };
 
   /*! TaskAllocator will speed up task allocation with fast dedicated thread
@@ -440,15 +440,6 @@ namespace pf {
   void Task::done(void) {
     this->toStart--;
     if (this->toStart == 0) scheduler->schedule(*this);
-  }
-
-  Task::Task(Task *completion_, Task *continuation_) :
-    completion(completion_),
-    continuation(continuation_),
-    toStart(1), toEnd(1)
-  {
-    if (continuation) continuation->toStart++;
-    if (completion) completion->toEnd++;
   }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
