@@ -9,16 +9,15 @@ namespace pf {
   /*! Interface for all tasks handled by the tasking system */
   class Task : public RefCount
   {
-    ALIGNED_CLASS
   public:
     /*! It can complete one task and can be continued by one other task */
     Task(Task *completion = NULL, Task *continuation = NULL);
 
-    /*! Now the task is built and immutable */
-    void done(void);
-
     /*! To override while specifying a task */
     virtual void run(void) = 0;
+
+    /*! Now the task is built and immutable */
+    void done(void);
 
   private:
     friend class TaskSet;       //!< Will tweak the ending criterium

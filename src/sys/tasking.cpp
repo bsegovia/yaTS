@@ -92,7 +92,6 @@ namespace pf {
     volatile bool dead;           //!< The tasking system should quit
   };
 
-#if 1
   /*! Allocator per thread */
   class ThreadStorage
   {
@@ -121,6 +120,8 @@ namespace pf {
     void newChunk(uint32 chunkID);
     /*! Push back a group of tasks in the global heap */
     void pushGlobal(uint32 chunkID);
+    /*! Pop a group of tasks from the global heap (if none, return NULL) */
+    void popGlobal(uint32 chunkID);
 
   private:
     friend class TaskAllocator;
@@ -167,6 +168,7 @@ namespace pf {
 
   void *TaskAllocator::allocate(size_t sz) {
     FATAL_IF (sz > maxSize, "Task size is too large (TODO remove that)");
+    FATAL_IF (sz < 2*sizeof(void*), "Task size is too small");
     return this->local[TaskScheduler::threadID].allocate(sz);
   }
 
@@ -201,14 +203,50 @@ namespace pf {
   }
 
   void ThreadStorage::pushGlobal(uint32 chunkID) {
+    const uint32 elemSize = 1 << chunkID;
+    void *list = this->chunk[chunkID];
+    void *succ = list, *pred = NULL;
+    while (this->currSize[chunkID] > chunkSize) {
+      assert(succ);
+      pred = succ;
+      succ = *(void**) succ;
+      this->currSize[chunkID] -= elemSize;
+    }
 
+    // If we pull off some nodes, then we push them back to the global heap
+    if (pred) {
+      *(void**) pred = NULL;
+      this->chunk[chunkID] = succ;
+      Lock<MutexActive> lock(allocator->mutex);
+      ((void**) list)[1] = allocator->global[chunkID];
+      allocator->global[chunkID] = list;
+    }
+  }
 
+  void ThreadStorage::popGlobal(uint32 chunkID) {
+    void *list = NULL;
+    assert(this->chunk[chunkID] == NULL);
+    if (allocator->global[chunkID] == NULL) return;
+
+    // Limit the contention time
+    do {
+      Lock<MutexActive> lock(allocator->mutex);
+      list = allocator->global[chunkID];
+      if (list == NULL) return;
+      allocator->global[chunkID] = ((void**) list)[1];
+    } while (0);
+
+    // This is our new chunk
+    this->chunk[chunkID] = list;
   }
 
   void* ThreadStorage::allocate(size_t sz) {
     const uint32 chunkID = __bsf(int(nextHighestPowerOf2(uint32(sz))));
-    if (UNLIKELY(this->chunk[chunkID] == NULL))
-      this->newChunk(chunkID);
+    if (UNLIKELY(this->chunk[chunkID] == NULL)) {
+      this->popGlobal(chunkID);
+      if (UNLIKELY(this->chunk[chunkID] == NULL))
+        this->newChunk(chunkID);
+    }
     void *curr = this->chunk[chunkID];
     this->chunk[chunkID] = *(void**) curr; // points to its predecessor
     this->currSize[chunkID] -= 1 << chunkID;
@@ -231,7 +269,7 @@ namespace pf {
     if (this->currSize[chunkID] > 2 * chunkSize)
       this->pushGlobal(chunkID);
   }
-#endif
+
   TaskScheduler::TaskScheduler(int threadNum_) :
     queues(NULL), threads(NULL), dead(false)
   {
@@ -348,15 +386,19 @@ namespace pf {
     // dequeue in LIFO style here)
     // Also, note that we reenqueue the task twice since it allows an
     // exponential propagation of the task sets in the other thread queues
-    if (this->elemNum > 1) {
+    atomic_t curr;
+    if (this->elemNum > 2) {
       this->toEnd += 2;
       scheduler->schedule(*this);
       scheduler->schedule(*this);
-      atomic_t curr;
       while ((curr = --this->elemNum) >= 0)
         this->run(curr);
-    }
-    else if (--this->elemNum == 0)
+    } else if (this->elemNum > 1) {
+      this->toEnd++;
+      scheduler->schedule(*this);
+      while ((curr = --this->elemNum) >= 0)
+        this->run(curr);
+    } else if (--this->elemNum == 0)
       this->run(0);
   }
 
