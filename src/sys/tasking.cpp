@@ -6,6 +6,11 @@
 
 #include <vector>
 
+/* One important remark here about reference counting. Tasks are referenced
+ * counted but we do not use Ref<Task> here. This is for performance reasons.
+ * We therefore *manually* handle the extra references the scheduler may have
+ * on a task. This is nasty but maintains a reasonnable speed in the system.
+ */
 #define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) do { EXPR; } while (0)
@@ -35,21 +40,21 @@ namespace pf {
       head++;
       IF_TASK_STATISTICS(statInsertNum++);
     }
-    INLINE Ref<Task> get(void) {
+    INLINE Task* get(void) {
       if (head == tail) return NULL;
       Lock<MutexType> lock(mutex);
       if (head == tail) return NULL;
       head--;
-      Ref<Task> task = tasks[head % elemNum];
+      Task* task = tasks[head % elemNum];
       tasks[head % elemNum] = NULL;
       IF_TASK_STATISTICS(statGetNum++);
       return task;
     }
-    INLINE Ref<Task> steal(void) {
+    INLINE Task* steal(void) {
       if (head == tail) return NULL;
       Lock<MutexType> lock(mutex);
       if (head == tail) return NULL;
-      Ref<Task> stolen = tasks[tail % elemNum];
+      Task* stolen = tasks[tail % elemNum];
       tasks[tail % elemNum] = NULL;
       tail++;
       IF_TASK_STATISTICS(statStealNum++);
@@ -65,9 +70,9 @@ namespace pf {
 #endif
   private:
     typedef MutexActive MutexType;
-    Ref<Task> tasks[elemNum];     //!< All tasks currently stored
+    Task* tasks[elemNum];         //!< All tasks currently stored
     volatile atomic_t head, tail; //!< Current queue property
-    MutexType mutex;             //!< Not lock-free right now
+    MutexType mutex;              //!< Not lock-free right now
   };
 
   /*! Handle the scheduling of all tasks. We basically implement here a
@@ -131,6 +136,8 @@ namespace pf {
         this->chunk[i] = NULL;
         this->currSize[i] = 0u;
       }
+      this->newChunk(6);
+      this->newChunk(7);
     }
     ~ThreadStorage(void) {
       for (size_t i = 0; i < toFree.size(); ++i) ALIGNED_FREE(toFree[i]);
@@ -352,6 +359,8 @@ namespace pf {
   }
 
   void TaskScheduler::schedule(Task &task) {
+    // the scheduler has a reference on the task now
+    task.refInc();
     queues[this->threadID].insert(task);
   }
 
@@ -379,19 +388,20 @@ namespace pf {
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
     for (;;) {
-      Ref<Task> task = This->queues[thread->tid].get();
-      while (!task) {
+      Task *task = This->queues[thread->tid].get();
+      while (task == NULL) {
         for (size_t i = 0; i < thread->tid; ++i)
-          if (task = This->queues[i].steal()) break;
-        if (!task)
+          if ((task = This->queues[i].steal()) != NULL) break;
+        if (task == NULL)
           for (size_t i = threadID+1; i < This->queueNum; ++i)
-            if (task = This->queues[i].steal()) break;
+            if ((task = This->queues[i].steal()) != NULL) break;
         if (UNLIKELY(This->dead)) goto end;
       }
       if (UNLIKELY(This->dead)) break;
 
       // Execute the function
       task->run();
+      Task *toRelease = task;
 
       // Explore the completions and runs all continuations if any
       do {
@@ -406,11 +416,14 @@ namespace pf {
               This->schedule(*task->continuation);
           }
           // Traverse all completions to signal we are done
-          task = task->completion;
+          task = task->completion.ptr;
         }
         else
           task = NULL;
       } while (task);
+
+      // run function is counterpart of schedule. We remove one ref
+      if (toRelease->refDec()) DELETE(toRelease);
     }
   end:
     DELETE(thread);

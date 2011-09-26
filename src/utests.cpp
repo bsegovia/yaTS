@@ -150,11 +150,11 @@ int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
-//  dummyTest();
+  dummyTest();
 #if 1
   treeTest<NodeTask>();
   treeTest<CascadeNodeTask>();
-//  taskSetTest();
+  taskSetTest();
 #endif
   dumpAlloc();
   endMemoryDebugger();
