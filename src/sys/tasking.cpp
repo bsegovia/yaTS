@@ -11,7 +11,7 @@
  * We therefore *manually* handle the extra references the scheduler may have
  * on a task. This is nasty but maintains a reasonnable speed in the system.
  */
-#define PF_TASK_STATICTICS 0
+#define PF_TASK_STATICTICS 1
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) do { EXPR; } while (0)
 #else
@@ -31,9 +31,8 @@ namespace pf {
     INLINE TaskQueue(void) :
 #if PF_TASK_STATICTICS
       statInsertNum(0), statGetNum(0), statStealNum(0),
-#endif
-      head(0), tail(0)
-    {}
+#endif /* PF_TASK_STATICTICS */
+      head(0), tail(0) {}
     INLINE void insert(Task &task) {
       assert(head - tail < elemNum);
       tasks[head % elemNum] = &task;
@@ -67,7 +66,7 @@ namespace pf {
                    ", stealNum " << statStealNum << std::endl;
     }
     Atomic statInsertNum, statGetNum, statStealNum;
-#endif
+#endif /* PF_TASK_STATICTICS */
   private:
     typedef MutexActive MutexType;
     Task* tasks[elemNum];         //!< All tasks currently stored
@@ -123,14 +122,14 @@ namespace pf {
   };
 
   /*! Allocator per thread */
-  class ALIGNED(CACHE_LINE) ThreadStorage
+  class ALIGNED(CACHE_LINE) TaskStorage
   {
   public:
-    ThreadStorage(void) :
+    TaskStorage(void) :
 #if PF_TASK_STATICTICS
       statNewChunkNum(0), statPushGlobalNum(0), statPopGlobalNum(0),
       statAllocateNum(0), statDeallocateNum(0),
-#endif
+#endif /* PF_TASK_STATICTICS */
       allocator(NULL)
     {
       for (size_t i = 0; i < maxHeap; ++i) {
@@ -138,7 +137,7 @@ namespace pf {
         this->currSize[i] = 0u;
       }
     }
-    ~ThreadStorage(void) {
+    ~TaskStorage(void) {
       for (size_t i = 0; i < toFree.size(); ++i) ALIGNED_FREE(toFree[i]);
     }
 
@@ -169,11 +168,11 @@ namespace pf {
     }
     Atomic statNewChunkNum, statPushGlobalNum, statPopGlobalNum;
     Atomic statAllocateNum, statDeallocateNum;
-#endif
+#endif /* PF_TASK_STATICTICS */
 
   private:
     friend class TaskAllocator;
-    enum { logChunkSize = 20 };            //!< log2(4KB)
+    enum { logChunkSize = 12 };            //!< log2(4KB)
     enum { chunkSize = 1<< logChunkSize }; //!< 4KB when taking memory from std
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
     TaskAllocator *allocator;    //!< Handles global heap
@@ -201,23 +200,23 @@ namespace pf {
     ~TaskAllocator(void);
     void *allocate(size_t sz);
     void deallocate(void *ptr);
-    enum { maxHeap = ThreadStorage::maxHeap };
+    enum { maxHeap = TaskStorage::maxHeap };
     enum { maxSize = 1 << maxHeap };
-    ThreadStorage *local;  //!< Local heaps (per thread and per size)
+    TaskStorage *local;  //!< Local heaps (per thread and per size)
     void *global[maxHeap]; //!< Global heap shared by all threads
     MutexActive mutex;     //!< To protect the global heap
     uint32 threadNum;      //!< One thread storage per thread
   };
 
   TaskAllocator::TaskAllocator(uint32 threadNum_) : threadNum(threadNum_) {
-    this->local = NEW_ARRAY(ThreadStorage, threadNum);
+    this->local = NEW_ARRAY(TaskStorage, threadNum);
     for (size_t i = 0; i < threadNum; ++i) this->local[i].allocator = this;
     for (size_t i = 0; i < maxHeap; ++i) this->global[i] = NULL;
   }
   TaskAllocator::~TaskAllocator(void) {
 #if PF_TASK_STATICTICS
     for (size_t i = 0; i < threadNum; ++i) this->local[i].printStats();
-#endif
+#endif /* PF_TASK_STATICTICS */
     DELETE_ARRAY(this->local);
   }
 
@@ -235,7 +234,7 @@ namespace pf {
     return this->local[TaskScheduler::threadID].deallocate(ptr);
   }
 
-  void ThreadStorage::newChunk(uint32 chunkID) {
+  void TaskStorage::newChunk(uint32 chunkID) {
     IF_TASK_STATISTICS(statNewChunkNum++);
     // We store the size of the elements in the chunk header
     const uint32 elemSize = 1 << chunkID;
@@ -262,17 +261,19 @@ namespace pf {
     this->chunk[chunkID] = pred;
   }
 
-  void ThreadStorage::pushGlobal(uint32 chunkID) {
+  void TaskStorage::pushGlobal(uint32 chunkID) {
     IF_TASK_STATISTICS(statPushGlobalNum++);
 
     const uint32 elemSize = 1 << chunkID;
     void *list = this->chunk[chunkID];
     void *succ = list, *pred = NULL;
+    uintptr_t totalSize = 0;
     while (this->currSize[chunkID] > chunkSize) {
       assert(succ);
       pred = succ;
       succ = *(void**) succ;
       this->currSize[chunkID] -= elemSize;
+      totalSize += elemSize;
     }
 
     // If we pull off some nodes, then we push them back to the global heap
@@ -281,11 +282,12 @@ namespace pf {
       this->chunk[chunkID] = succ;
       Lock<MutexActive> lock(allocator->mutex);
       ((void**) list)[1] = allocator->global[chunkID];
+      ((uintptr_t *) list)[2] = totalSize;
       allocator->global[chunkID] = list;
     }
   }
 
-  void ThreadStorage::popGlobal(uint32 chunkID) {
+  void TaskStorage::popGlobal(uint32 chunkID) {
     IF_TASK_STATISTICS(statPopGlobalNum++);
     void *list = NULL;
     assert(this->chunk[chunkID] == NULL);
@@ -301,9 +303,10 @@ namespace pf {
 
     // This is our new chunk
     this->chunk[chunkID] = list;
+    this->currSize[chunkID] = ((uintptr_t *) list)[2];
   }
 
-  void* ThreadStorage::allocate(size_t sz) {
+  void* TaskStorage::allocate(size_t sz) {
     IF_TASK_STATISTICS(statAllocateNum++);
     const uint32 chunkID = __bsf(int(nextHighestPowerOf2(uint32(sz))));
     if (UNLIKELY(this->chunk[chunkID] == NULL)) {
@@ -317,7 +320,7 @@ namespace pf {
     return curr;
   }
 
-  void ThreadStorage::deallocate(void *ptr) {
+  void TaskStorage::deallocate(void *ptr) {
     IF_TASK_STATISTICS(statDeallocateNum++);
     // Figure out with the chunk header the size of this element
     char *chunk = (char*) (uintptr_t(ptr) & ~((1<<logChunkSize)-1));
@@ -338,7 +341,7 @@ namespace pf {
   TaskScheduler::TaskScheduler(int threadNum_) :
     queues(NULL), threads(NULL), dead(false)
   {
-    if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 1;
+    if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 2;
     this->threadNum = threadNum_;
 
     // We have a work queue for the main thread too
@@ -374,7 +377,7 @@ namespace pf {
       std::cout << "Task Queue " << i << " ";
       queues[i].printStats();
     }
-#endif
+#endif /* PF_TASK_STATICTICS */
     SAFE_DELETE_ARRAY(queues);
   }
 
@@ -409,14 +412,14 @@ namespace pf {
 
         // We are done here
         if (stillRunning == 0) {
-          // Run the continuation if any
-          if (task->continuation) {
-            task->continuation->toStart--;
-            if (task->continuation->toStart == 0)
-              This->schedule(*task->continuation);
+          // Start the tasks if they become ready
+          if (task->toBeStarted) {
+            task->toBeStarted->toStart--;
+            if (task->toBeStarted->toStart == 0)
+              This->schedule(*task->toBeStarted);
           }
           // Traverse all completions to signal we are done
-          task = task->completion.ptr;
+          task = task->toBeEnded.ptr;
         }
         else
           task = NULL;
@@ -445,10 +448,7 @@ namespace pf {
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
   void *Task::operator new(size_t size) { return allocator->allocate(size); }
   void Task::operator delete(void *ptr) { allocator->deallocate(ptr); }
-#endif
-
-  TaskSet::TaskSet(size_t elemNum_, Task *completion, Task *continuation) :
-    Task(completion, continuation), elemNum(elemNum_) { }
+#endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
   void TaskSet::run(void)
   {
@@ -481,15 +481,6 @@ namespace pf {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
     scheduler = NEW(TaskScheduler);
     allocator = NEW(TaskAllocator, scheduler->getThreadNum()+1);
-#if 0
-    void *ptr[1000];
-    for (int i = 0; i < 1000; ++i)
-      ptr[i] = allocator->allocate(CACHE_LINE);
-    for (int i = 0; i < 1000; ++i)
-      allocator->deallocate(ptr[i]);
-    for (int i = 0; i < 1000; ++i)
-      ptr[i] = allocator->allocate(CACHE_LINE);
-#endif
   }
 
   void enterTaskingSystem(void) {

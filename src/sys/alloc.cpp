@@ -11,8 +11,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 namespace pf
 {
-  /*! Count the still unfreed allocations */
-  static Atomic unfreedNum(0);
 
 #if PF_DEBUG_MEMORY
   /*! Store each allocation data */
@@ -25,13 +23,14 @@ namespace pf
 
   /*! Store allocation information */
   struct MemoryDebugger {
-    MemoryDebugger(void) : allocNum(0) {}
+    MemoryDebugger(void) : unfreedNum(0), allocNum(0) {}
     void* insertAlloc(void *ptr, const char *file, const char *function, int line);
     void removeAlloc(void *ptr);
     void dumpAlloc(void);
-
+    /*! Count the still unfreed allocations */
+    volatile intptr_t unfreedNum;
     /*! Total number of allocations done */
-    Atomic allocNum;
+    volatile intptr_t allocNum;
     /*! Sorts the file name and function name strings */
     std::unordered_map<const char*, int> staticStringMap;
     /*! Each element contains the actual string */

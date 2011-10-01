@@ -13,29 +13,38 @@ namespace pf {
   {
   public:
     /*! It can complete one task and can be continued by one other task */
-    INLINE Task(Task *completion_, Task *continuation_) :
-      completion(completion_),
-      continuation(continuation_),
-      toStart(1), toEnd(1) {
-      if (continuation) continuation->toStart++;
-      if (completion) completion->toEnd++;
-    }
+    INLINE Task(void) : toStart(1), toEnd(1) {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
-    /*! Now the task is built and immutable */
+    /*! Now the task is built and is allowed to be scheduled */
     void done(void);
+    /*! The given task cannot *start* as long as this task is not done */
+    INLINE void starts(Task *other) {
+      if (UNLIKELY(other == NULL)) return;
+      assert(this->toBeStarted == false);
+      other->toStart++;
+      this->toBeStarted = other;
+    }
+    /*! The given task cannot *end* as long as this task is not done */
+    INLINE void ends(Task *other) {
+      if (UNLIKELY(other == NULL)) return;
+      assert(this->toBeEnded == false);
+      other->toEnd++;
+      this->toBeEnded = other;
+    }
+
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
     /*! Tasks use a scalable fixed allocator */
     void* operator new(size_t size);
     /*! Deallocations go through the dedicated allocator too */
     void operator delete(void* ptr);
-#endif
+#endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
   private:
     friend class TaskSet;       //!< Will tweak the ending criterium
     friend class TaskScheduler; //!< Needs to access everything
-    Ref<Task> completion;       //!< Signalled it when finishing
-    Ref<Task> continuation;     //!< Triggers it when ready
+    Ref<Task> toBeEnded;        //!< Signals it when finishing
+    Ref<Task> toBeStarted;      //!< Triggers it when ready
     Atomic toStart;             //!< MBZ before starting
     Atomic toEnd;               //!< MBZ before ending
   };
@@ -44,8 +53,8 @@ namespace pf {
   class TaskSet : public Task
   {
   public:
-    /*! As for Task, it has both completion and continuation */
-    TaskSet(size_t elemNum, Task *completion = NULL, Task *continuation = NULL);
+    /*! elemNum is the number of times to execute the run function */
+    INLINE TaskSet(size_t elemNum) : elemNum(elemNum) {}
     /*! This function is user-specified */
     virtual void run(size_t elemID) = 0;
 

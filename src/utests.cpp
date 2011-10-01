@@ -20,22 +20,19 @@ using namespace pf;
 ///////////////////////////////////////////////////////////////////////////////
 class NothingTask : public Task {
 public:
-  INLINE NothingTask(Task *completion = NULL, Task *continuation = NULL) :
-    Task(completion, continuation) {}
-  virtual void run(void) { }
+  virtual void run(void) {}
 };
 
 class DoneTask : public Task {
 public:
-  INLINE DoneTask(Task *completion = NULL, Task *continuation = NULL) :
-    Task(completion, continuation) {}
   virtual void run(void) { interruptTaskingSystem(); }
 };
 
 START_UTEST(dummyTest)
   startTaskingSystem();
   Task *done = NEW(DoneTask);
-  Task *nothing = NEW(NothingTask, NULL, done);
+  Task *nothing = NEW(NothingTask);
+  nothing->starts(done);
   done->done();
   nothing->done();
   enterTaskingSystem();
@@ -47,11 +44,9 @@ END_UTEST(dummyTest)
 ///////////////////////////////////////////////////////////////////////////////
 class SimpleTaskSet : public TaskSet {
 public:
-  INLINE SimpleTaskSet(size_t elemNum, Task *continuation, uint32 *array_) :
-    TaskSet(elemNum, NULL, continuation), array(array_) {}
-  virtual void run(size_t elemID) {
-    array[elemID] = 1u;
-  }
+  INLINE SimpleTaskSet(size_t elemNum, uint32 *array_) :
+    TaskSet(elemNum), array(array_) {}
+  virtual void run(size_t elemID) { array[elemID] = 1u; }
   uint32 *array;
 };
 
@@ -61,7 +56,8 @@ START_UTEST(taskSetTest)
   uint32 *array = NEW_ARRAY(uint32, elemNum);
   for (size_t i = 0; i < elemNum; ++i) array[i] = 0;
   Task *done = NEW(DoneTask);
-  Task *taskSet = NEW(SimpleTaskSet, elemNum, done, array);
+  Task *taskSet = NEW(SimpleTaskSet, elemNum, array);
+  taskSet->starts(done);
   done->done();
   taskSet->done();
   enterTaskingSystem();
@@ -81,8 +77,8 @@ enum { maxLevel = 20u };
 /*! One node task per node in the tree. Task completes the root */
 class NodeTask : public Task {
 public:
-  INLINE NodeTask(Atomic &value_, uint32 lvl_, Task *root_=NULL, Task *cont_=NULL) :
-    Task(root_, cont_), value(value_), lvl(lvl_) {
+  INLINE NodeTask(Atomic &value_, uint32 lvl_, Task *root_=NULL) :
+    value(value_), lvl(lvl_) {
     this->root = root_ == NULL ? this : root_;
   }
   virtual void run(void);
@@ -97,6 +93,8 @@ void NodeTask::run(void) {
   else {
     Task *left  = NEW(NodeTask, this->value, this->lvl+1, this->root);
     Task *right = NEW(NodeTask, this->value, this->lvl+1, this->root);
+    left->ends(this->root);
+    right->ends(this->root);
     left->done();
     right->done();
   }
@@ -110,8 +108,8 @@ void NodeTask::run(void) {
 /*! One node task per node in the tree. Task completes its parent */
 class CascadeNodeTask : public Task {
 public:
-  INLINE CascadeNodeTask(Atomic &value_, uint32 lvl_, Task *root_=NULL, Task *cont_=NULL) :
-    Task(root_, cont_), value(value_), lvl(lvl_) {}
+  INLINE CascadeNodeTask(Atomic &value_, uint32 lvl_, Task *root_=NULL) :
+    value(value_), lvl(lvl_) {}
   virtual void run(void);
   Atomic &value;
   uint32 lvl;
@@ -121,14 +119,16 @@ void CascadeNodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
-    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1, this);
-    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1, this);
+    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    left->ends(this);
+    right->ends(this);
     left->done();
     right->done();
   }
 }
 
-/*! For both tests */
+/*! For both tree tests */
 template<typename NodeType>
 START_UTEST(treeTest)
   startTaskingSystem();
@@ -136,7 +136,8 @@ START_UTEST(treeTest)
   std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
   double t = getSeconds();
   Task *done = NEW(DoneTask);
-  Task *root = NEW(NodeType, value, 0, NULL, done);
+  Task *root = NEW(NodeType, value, 0);
+  root->starts(done);
   done->done();
   root->done();
   enterTaskingSystem();
@@ -146,6 +147,37 @@ START_UTEST(treeTest)
   FATAL_IF(value != (1 << maxLevel), "treeTest failed");
 END_UTEST(treeTest)
 
+///////////////////////////////////////////////////////////////////////////////
+// We try to stress the internal allocator here
+///////////////////////////////////////////////////////////////////////////////
+class AllocateTask : public TaskSet {
+public:
+  AllocateTask(size_t elemNum) : TaskSet(elemNum) {}
+  virtual void run(size_t elemID);
+  enum { allocNum = 1 << 10 };
+  enum { iterNum = 1 << 5 };
+};
+
+void AllocateTask::run(size_t elemID) {
+  Task *tasks[allocNum];
+  for (int j = 0; j < iterNum; ++j) {
+    const int taskNum = rand() % allocNum;
+    for (int i = 0; i < taskNum; ++i) tasks[i] = NEW(NothingTask);
+    for (int i = 0; i < taskNum; ++i) DELETE(tasks[i]);
+  }
+}
+
+START_UTEST(allocatorTest)
+  startTaskingSystem();
+  Task *done = NEW(DoneTask);
+  Task *allocate = NEW(AllocateTask, 1 << 10);
+  allocate->starts(done);
+  done->done();
+  allocate->done();
+  enterTaskingSystem();
+  endTaskingSytem();
+END_UTEST(allocatorTest)
+
 int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
@@ -154,6 +186,7 @@ int main(int argc, char **argv)
   treeTest<NodeTask>();
   treeTest<CascadeNodeTask>();
   taskSetTest();
+  allocatorTest();
   dumpAlloc();
   endMemoryDebugger();
   return 0;
