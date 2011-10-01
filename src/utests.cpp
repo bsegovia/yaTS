@@ -181,6 +181,7 @@ END_UTEST(allocatorTest)
 int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
+  std::cout << __bsf(1) << std::endl;
   startMemoryDebugger();
   dummyTest();
   treeTest<NodeTask>();

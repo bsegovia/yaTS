@@ -5,13 +5,14 @@
 #include "sys/sysinfo.hpp"
 
 #include <vector>
+#include <cstdlib>
 
 /* One important remark here about reference counting. Tasks are referenced
  * counted but we do not use Ref<Task> here. This is for performance reasons.
  * We therefore *manually* handle the extra references the scheduler may have
  * on a task. This is nasty but maintains a reasonnable speed in the system.
  */
-#define PF_TASK_STATICTICS 1
+#define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) do { EXPR; } while (0)
 #else
@@ -23,56 +24,116 @@ namespace pf {
   class TaskSet;       // Idem but can be run N times
   class TaskAllocator; // Dedicated to allocate tasks and task sets
 
-  /*! Structure used for work stealing */
-  template <int elemNum>
+  /*! Fast random number generator (TODO find something that works) */
+  struct ALIGNED(CACHE_LINE) FastRand {
+    FastRand(void) { x = rand(); y = rand(); z = rand(); }
+    unsigned long rand(void) {
+#if 0
+      unsigned long t;
+      x ^= x << 16;
+      x ^= x >> 5;
+      x ^= x << 1;
+      t = x;
+      x = y;
+      y = z;
+      z = t ^ x ^ y;
+#else
+      ++z;
+#endif
+      return z;
+    }
+    unsigned long x, y, z;
+    ALIGNED_CLASS
+  };
+
+  /*! A task may be used in two modes:
+   * - Work stealing. Only the owner can push tasks. The owner picks up tasks in
+   *   depth first order (LIFO). Stealers pick them in breadth first order
+   *   (FIFO).
+   * - Affinity. Here, only the owner can *execute* tasks. Task are inserted and
+   *   removed in a FIFO way.
+   */
+  enum TaskQueueMode {
+    WORK_STEALING_MODE = 0,
+    AFFINITY_MODE      = 1
+  };
+
+  /*! Structure used to issue ready-to-process tasks */
+  template <int elemNum, TaskQueueMode mode>
   class ALIGNED(CACHE_LINE) TaskQueue
   {
   public:
-    INLINE TaskQueue(void) :
+    INLINE TaskQueue(void)
 #if PF_TASK_STATICTICS
-      statInsertNum(0), statGetNum(0), statStealNum(0),
+      : statInsertNum(0), statGetNum(0), statStealNum(0)
 #endif /* PF_TASK_STATICTICS */
-      head(0), tail(0) {}
+      {
+        for (size_t i = 0; i < NUM_PRIORITY; ++i) head[i] = tail[i] = 0;
+      }
+    /*! Return the bit mask of the four queues:
+     *  - 1 if there is any task
+     *  - 0 if empty
+     *  Since we properly sort priorities from 0 to 3, using bit scan forward will
+     *  return the first non-empty queue with the highest priority
+     */
+    INLINE int getActiveMask(void) const {
+      const __m128i len = _mm_sub_epi32(tail.v, head.v);
+      return _mm_movemask_ps(_mm_castsi128_ps(len));
+    }
+
+    /*! No need to lock here since only the owner can push a task */
     INLINE void insert(Task &task) {
-      assert(head - tail < elemNum);
-      tasks[head % elemNum] = &task;
-      head++;
+      const TaskPriority prio = task.getPriority();
+      assert(head[prio] - tail[prio] < elemNum);
+      tasks[prio][head[prio] % elemNum] = &task;
+      head[prio]++;
       IF_TASK_STATISTICS(statInsertNum++);
     }
+
+    /*! Both stealers and the victim can pick up a task: we lock */
     INLINE Task* get(void) {
-      if (head == tail) return NULL;
+      if (this->getActiveMask() == 0) return NULL;
       Lock<MutexType> lock(mutex);
-      if (head == tail) return NULL;
-      head--;
-      Task* task = tasks[head % elemNum];
-      tasks[head % elemNum] = NULL;
+      const int mask = this->getActiveMask();
+      if (mask == 0) return NULL;
+      const TaskPriority prio = TaskPriority(__bsf(mask));
+      const int32 index = --head[prio];
+      Task* task = tasks[prio][index % elemNum];
       IF_TASK_STATISTICS(statGetNum++);
       return task;
     }
+
+    /*! Idem: we lock */
     INLINE Task* steal(void) {
-      if (head == tail) return NULL;
+      if (this->getActiveMask() == 0) return NULL;
       Lock<MutexType> lock(mutex);
-      if (head == tail) return NULL;
-      Task* stolen = tasks[tail % elemNum];
-      tasks[tail % elemNum] = NULL;
-      tail++;
+      const int mask = this->getActiveMask();
+      if (mask == 0) return NULL;
+      const TaskPriority prio = TaskPriority(__bsf(mask));
+      const int32 index = tail[prio]++;
+      Task* stolen = tasks[prio][index % elemNum];
       IF_TASK_STATISTICS(statStealNum++);
       return stolen;
     }
+
 #if PF_TASK_STATICTICS
     void printStats(void) {
       std::cout << "insertNum " << statInsertNum <<
                    ", getNum " << statGetNum <<
                    ", stealNum " << statStealNum << std::endl;
     }
-    Atomic statInsertNum, statGetNum, statStealNum;
+    Atomic32 statInsertNum, statGetNum, statStealNum;
 #endif /* PF_TASK_STATICTICS */
+
   private:
     typedef MutexActive MutexType;
-    Task* tasks[elemNum];         //!< All tasks currently stored
-    volatile atomic_t head, tail; //!< Current queue property
-    MutexType mutex;              //!< Not lock-free right now
-    ALIGNED_CLASS
+    Task* tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
+    MutexType mutex;                    //!< Not lock-free right now
+    union {
+      INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
+      volatile int32 x[NUM_PRIORITY];
+      volatile __m128i v;
+    } head, tail;
   };
 
   /*! Handle the scheduling of all tasks. We basically implement here a
@@ -93,7 +154,8 @@ namespace pf {
     INLINE void die(void) { dead = true; }
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getThreadNum(void) { return this->threadNum; }
-
+    /*! Try to get a task from all the current queues */
+    INLINE Task* getTask(int threadID);
     /*! Data provided to each thread */
     struct Thread {
       Thread (size_t tid, TaskScheduler &scheduler_) :
@@ -112,9 +174,13 @@ namespace pf {
     friend class Task;            //!< Tasks ...
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
-    static THREAD uint32 threadID;//!< ThreadID for each thread
     enum { queueSize = 2048 };    //!< Number of task per queue
-    TaskQueue<queueSize> *queues; //!< One queue per thread
+    typedef TaskQueue<queueSize,WORK_STEALING_MODE> TaskWSQueue;
+    typedef TaskQueue<queueSize,AFFINITY_MODE> TaskAffinityQueue;
+    static THREAD uint32 threadID;//!< ThreadID for each thread
+    TaskWSQueue *wsQueues;        //!< 1 queue per thread
+    TaskAffinityQueue *afQueues;  //!< 1 queue per thread
+    FastRand *random;             //!< 1 random generator per thread
     thread_t *threads;            //!< All threads currently running
     size_t threadNum;             //!< Total number of threads running
     size_t queueNum;              //!< Number of queues (should be threadNum+1)
@@ -339,14 +405,18 @@ namespace pf {
   }
 
   TaskScheduler::TaskScheduler(int threadNum_) :
-    queues(NULL), threads(NULL), dead(false)
+    wsQueues(NULL), afQueues(NULL), threads(NULL), dead(false)
   {
     if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 2;
     this->threadNum = threadNum_;
 
     // We have a work queue for the main thread too
     this->queueNum = threadNum+1;
-    this->queues = NEW_ARRAY(TaskQueue<queueSize>, queueNum);
+    this->wsQueues = NEW_ARRAY(TaskWSQueue, queueNum);
+    this->afQueues = NEW_ARRAY(TaskAffinityQueue, queueNum);
+
+    // Also one random generator for *every* thread
+    this->random = NEW_ARRAY(FastRand, queueNum);
 
     // Only if we have dedicated worker threads
     if (threadNum > 0) {
@@ -364,7 +434,7 @@ namespace pf {
   void TaskScheduler::schedule(Task &task) {
     // the scheduler has a reference on the task now
     task.refInc();
-    queues[this->threadID].insert(task);
+    wsQueues[this->threadID].insert(task);
   }
 
   TaskScheduler::~TaskScheduler(void) {
@@ -375,13 +445,25 @@ namespace pf {
 #if PF_TASK_STATICTICS
     for (size_t i = 0; i < queueNum; ++i) {
       std::cout << "Task Queue " << i << " ";
-      queues[i].printStats();
+      wsQueues[i].printStats();
     }
 #endif /* PF_TASK_STATICTICS */
-    SAFE_DELETE_ARRAY(queues);
+    SAFE_DELETE_ARRAY(wsQueues);
+    SAFE_DELETE_ARRAY(afQueues);
+    SAFE_DELETE_ARRAY(random);
   }
 
   THREAD uint32 TaskScheduler::threadID = 0;
+
+  Task* TaskScheduler::getTask(int threadID) {
+    Task *task = this->wsQueues[threadID].get();
+    if (task)
+      return task;
+    else {
+      const unsigned long index = this->random[threadID].rand() % queueNum;
+      return this->wsQueues[index].steal();
+    }
+  }
 
   void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
   {
@@ -391,16 +473,12 @@ namespace pf {
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
     for (;;) {
-      Task *task = This->queues[thread->tid].get();
-      while (task == NULL) {
-        for (size_t i = 0; i < thread->tid; ++i)
-          if ((task = This->queues[i].steal()) != NULL) break;
-        if (task == NULL)
-          for (size_t i = threadID+1; i < This->queueNum; ++i)
-            if ((task = This->queues[i].steal()) != NULL) break;
+      Task *task = NULL;
+      for (;;) {
+        task = This->getTask(threadID);
+        if (task) break;
         if (UNLIKELY(This->dead)) goto end;
       }
-      if (UNLIKELY(This->dead)) break;
 
       // Execute the function
       task->run();

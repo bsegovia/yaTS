@@ -284,10 +284,12 @@ namespace pf
     return ((i - 1) & i) == 0;
   }
 
-#define ALIGNED_CLASS                                             \
-public:                                                           \
-  void* operator new(size_t size) { return alignedMalloc(size); } \
-  void operator delete(void* ptr) { alignedFree(ptr); }           \
+#define ALIGNED_CLASS                                               \
+public:                                                             \
+  void* operator new(size_t size) { return alignedMalloc(size); }   \
+  void operator delete(void* ptr) { alignedFree(ptr); }             \
+  void* operator new[](size_t size) { return alignedMalloc(size); } \
+  void operator delete[](void* ptr) { alignedFree(ptr); }           \
 private:
 
   /*! random functions */

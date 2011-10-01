@@ -29,7 +29,7 @@ namespace pf
     virtual ~RefCount() {}
     INLINE void refInc() { refCounter++; }
     INLINE bool refDec() { return !(--refCounter); }
-    Atomic refCounter;
+    Atomic32 refCounter;
   };
 
   ////////////////////////////////////////////////////////////////////////////////

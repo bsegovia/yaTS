@@ -108,7 +108,7 @@ INLINE int __bsr(int v) {
 }
 
 INLINE int __btc(int v, int i) {
-  int r = 0; asm ("btc %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags" ); return r;
+  int r = 0; asm ("btc %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags"); return r;
 }
 
 INLINE int __bts(int v, int i) {
@@ -128,7 +128,7 @@ INLINE size_t __bsr(size_t v) {
 }
 
 INLINE size_t __btc(size_t v, size_t i) {
-  size_t r = 0; asm ("btc %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags" ); return r;
+  size_t r = 0; asm ("btc %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags"); return r;
 }
 
 INLINE size_t __bts(size_t v, size_t i) {
@@ -139,25 +139,27 @@ INLINE size_t __btr(size_t v, size_t i) {
   size_t r = 0; asm ("btr %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags"); return r;
 }
 
+typedef int32 atomic32_t;
+
+INLINE int32 atomic_add(int32 volatile* value, int32 input)
+{  asm volatile("lock xadd %0,%1" : "+r" (input), "+m" (*value) : "r" (input), "m" (*value)); return input; }
+
+INLINE int32 atomic_cmpxchg(int32 volatile* value, const int32 input, int32 comparand)
+{  asm volatile("lock cmpxchg %2,%0" : "=m" (*value), "=a" (comparand) : "r" (input), "m" (*value), "a" (comparand) : "flags"); return comparand; }
+
 #if defined(__X86_64__)
 
   typedef int64 atomic_t;
 
-  INLINE int64 atomic_add( int64 volatile* value, int64 input )
+  INLINE int64 atomic_add(int64 volatile* value, int64 input)
   {  asm volatile("lock xaddq %0,%1" : "+r" (input), "+m" (*value) : "r" (input), "m" (*value));  return input;  }
 
-  INLINE int64 atomic_cmpxchg( int64 volatile* value, const int64 input, int64 comparand )
+  INLINE int64 atomic_cmpxchg(int64 volatile* value, const int64 input, int64 comparand)
   {  asm volatile("lock cmpxchgq %2,%0" : "+m" (*value), "+a" (comparand) : "r" (input), "m" (*value), "r" (comparand) : "flags"); return comparand;  }
 
 #else
 
   typedef int32 atomic_t;
-
-  INLINE int32 atomic_add( int32 volatile* value, int32 input )
-  {  asm volatile("lock xadd %0,%1" : "+r" (input), "+m" (*value) : "r" (input), "m" (*value)); return input; }
-
-  INLINE int32 atomic_cmpxchg( int32 volatile* value, const int32 input, int32 comparand )
-  {  asm volatile("lock cmpxchg %2,%0" : "=m" (*value), "=a" (comparand) : "r" (input), "m" (*value), "a" (comparand) : "flags"); return comparand; }
 
 #endif
 

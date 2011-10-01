@@ -8,12 +8,28 @@
 
 namespace pf {
 
+  /*! A task with a higher priority will be preferred to a task with a lower
+   * priority. Note that the system does not completely comply with priorities.
+   * Basically, because the system is distributed, it is possible that one
+   * particular worker thread processes a low priority task while another thread
+   * actually has higher priority tasks currently available
+   */
+  enum TaskPriority {
+    CRITICAL_PRIORITY = 0u,
+    HIGH_PRIORITY     = 1u,
+    NORMAL_PRIORITY   = 2u,
+    LOW_PRIORITY      = 3u,
+    NUM_PRIORITY      = 4u,
+    INVALID_PRIORITY  = 0xffffu
+  };
+
   /*! Interface for all tasks handled by the tasking system */
   class Task : public RefCount
   {
   public:
     /*! It can complete one task and can be continued by one other task */
-    INLINE Task(void) : toStart(1), toEnd(1) {}
+    INLINE Task(void) :
+      toStart(1), toEnd(1), priority(NORMAL_PRIORITY), affinity(-1) {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
     /*! Now the task is built and is allowed to be scheduled */
@@ -32,9 +48,14 @@ namespace pf {
       other->toEnd++;
       this->toBeEnded = other;
     }
+    /*! Set / get task priority and affinity */
+    INLINE void setPriority(TaskPriority prio)  { this->priority = prio; }
+    INLINE void setAffinity(int32 affi)         { this->affinity = affi; }
+    INLINE TaskPriority getPriority(void) const { return this->priority; }
+    INLINE int16 getAffinity(void)        const { return this->affinity; }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
-    /*! Tasks use a scalable fixed allocator */
+    /*! Tasks use a scalable fixed size allocator */
     void* operator new(size_t size);
     /*! Deallocations go through the dedicated allocator too */
     void operator delete(void* ptr);
@@ -45,8 +66,10 @@ namespace pf {
     friend class TaskScheduler; //!< Needs to access everything
     Ref<Task> toBeEnded;        //!< Signals it when finishing
     Ref<Task> toBeStarted;      //!< Triggers it when ready
-    Atomic toStart;             //!< MBZ before starting
-    Atomic toEnd;               //!< MBZ before ending
+    Atomic32 toStart;           //!< MBZ before starting
+    Atomic32 toEnd;             //!< MBZ before ending
+    TaskPriority priority;      //!< Task priority
+    int16 affinity;             //!< The task will run on a particular thread
   };
 
   /*! Allow the run function to be executed several times */
