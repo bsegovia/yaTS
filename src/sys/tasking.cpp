@@ -11,6 +11,7 @@
  * counted but we do not use Ref<Task> here. This is for performance reasons.
  * We therefore *manually* handle the extra references the scheduler may have
  * on a task. This is nasty but maintains a reasonnable speed in the system.
+ * Using Ref<Task> in the queue makes the system roughly twice slower
  */
 #define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
@@ -20,6 +21,10 @@
 #endif
 
 namespace pf {
+  ///////////////////////////////////////////////////////////////////////////
+  /// Declaration of the internal classes of the tasking system
+  ///////////////////////////////////////////////////////////////////////////
+
   class Task;          // Basically an asynchronous function with dependencies
   class TaskSet;       // Idem but can be run N times
   class TaskAllocator; // Dedicated to allocate tasks and task sets
@@ -90,39 +95,11 @@ namespace pf {
     {}
 
     /*! No need to lock here since only the owner can push a task */
-    INLINE void insert(Task &task) {
-      const TaskPriority prio = task.getPriority();
-      assert(head[prio] - tail[prio] < elemNum);
-      this->tasks[prio][this->head[prio] % elemNum] = &task;
-      this->head[prio]++;
-      IF_TASK_STATISTICS(statInsertNum++);
-    }
-
+    INLINE void insert(Task &task);
     /*! Both stealers and the victim can pick up a task: we lock */
-    INLINE Task* get(void) {
-      if (this->getActiveMask() == 0) return NULL;
-      Lock<MutexActive> lock(this->mutex);
-      const int mask = this->getActiveMask();
-      if (mask == 0) return NULL;
-      const TaskPriority prio = TaskPriority(__bsf(mask));
-      const int32 index = --this->head[prio];
-      Task* task = this->tasks[prio][index % elemNum];
-      IF_TASK_STATISTICS(statGetNum++);
-      return task;
-    }
-
+    INLINE Task* get(void);
     /*! Idem: we lock */
-    INLINE Task* steal(void) {
-      if (this->getActiveMask() == 0) return NULL;
-      Lock<MutexActive> lock(this->mutex);
-      const int mask = this->getActiveMask();
-      if (mask == 0) return NULL;
-      const TaskPriority prio = TaskPriority(__bsf(mask));
-      const int32 index = this->tail[prio]++;
-      Task* stolen = this->tasks[prio][index % elemNum];
-      IF_TASK_STATISTICS(statStealNum++);
-      return stolen;
-    }
+    INLINE Task* steal(void);
 
 #if PF_TASK_STATICTICS
     void printStats(void) {
@@ -134,6 +111,10 @@ namespace pf {
 #endif /* PF_TASK_STATICTICS */
   };
 
+  /*! Tasks with affinity go here. For this queue:
+   *  - any thread can push a task
+   *  - only the owner can pick up tasks
+   */
   template <int elemNum>
   struct TaskAffinityQueue : TaskQueue<elemNum> {
     TaskAffinityQueue (void)
@@ -143,25 +124,10 @@ namespace pf {
     {}
 
     /*! All threads can insert a task. We need to lock */
-    INLINE void insert(Task &task) {
-      const TaskPriority prio = task.getPriority();
-      assert(head[prio] - tail[prio] < elemNum);
-      Lock<MutexActive> lock(this->mutex);
-      this->tasks[prio][this->head[prio] % elemNum] = &task;
-      this->head[prio]++;
-      IF_TASK_STATISTICS(statInsertNum++);
-    }
-
+    INLINE void insert(Task &task);
     /*! Only the owner can pick up tasks. No need to lock */
-    INLINE Task* get(void) {
-      const int mask = this->getActiveMask();
-      if (mask == 0) return NULL;
-      const TaskPriority prio = TaskPriority(__bsf(mask));
-      const int32 index = this->tail[prio]++;
-      Task* task = this->tasks[prio][index % elemNum];
-      IF_TASK_STATISTICS(statGetNum++);
-      return task;
-    }
+    INLINE Task* get(void);
+
 #if PF_TASK_STATICTICS
     void printStats(void) {
       std::cout << "insertNum " << statInsertNum <<
@@ -306,6 +272,65 @@ namespace pf {
     MutexActive mutex;     //!< To protect the global heap
     uint32 threadNum;      //!< One thread storage per thread
   };
+
+  ///////////////////////////////////////////////////////////////////////////
+  /// Implementation of the internal classes of the tasking system
+  ///////////////////////////////////////////////////////////////////////////
+  template<int elemNum>
+  void TaskWorkStealingQueue<elemNum>::insert(Task &task) {
+    const TaskPriority prio = task.getPriority();
+    assert(head[prio] - tail[prio] < elemNum);
+    this->tasks[prio][this->head[prio] % elemNum] = &task;
+    this->head[prio]++;
+    IF_TASK_STATISTICS(statInsertNum++);
+  }
+
+  template<int elemNum>
+  Task* TaskWorkStealingQueue<elemNum>::get(void) {
+    if (this->getActiveMask() == 0) return NULL;
+    Lock<MutexActive> lock(this->mutex);
+    const int mask = this->getActiveMask();
+    if (mask == 0) return NULL;
+    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const int32 index = --this->head[prio];
+    Task* task = this->tasks[prio][index % elemNum];
+    IF_TASK_STATISTICS(statGetNum++);
+    return task;
+  }
+
+  template<int elemNum>
+  Task* TaskWorkStealingQueue<elemNum>::steal(void) {
+    if (this->getActiveMask() == 0) return NULL;
+    Lock<MutexActive> lock(this->mutex);
+    const int mask = this->getActiveMask();
+    if (mask == 0) return NULL;
+    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const int32 index = this->tail[prio]++;
+    Task* stolen = this->tasks[prio][index % elemNum];
+    IF_TASK_STATISTICS(statStealNum++);
+    return stolen;
+  }
+
+  template<int elemNum>
+  void TaskAffinityQueue<elemNum>::insert(Task &task) {
+    const TaskPriority prio = task.getPriority();
+    assert(head[prio] - tail[prio] < elemNum);
+    Lock<MutexActive> lock(this->mutex);
+    this->tasks[prio][this->head[prio] % elemNum] = &task;
+    this->head[prio]++;
+    IF_TASK_STATISTICS(statInsertNum++);
+  }
+
+  template<int elemNum>
+  Task* TaskAffinityQueue<elemNum>::get(void) {
+    const int mask = this->getActiveMask();
+    if (mask == 0) return NULL;
+    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const int32 index = this->tail[prio]++;
+    Task* task = this->tasks[prio][index % elemNum];
+    IF_TASK_STATISTICS(statGetNum++);
+    return task;
+  }
 
   TaskAllocator::TaskAllocator(uint32 threadNum_) : threadNum(threadNum_) {
     this->local = NEW_ARRAY(TaskStorage, threadNum);
@@ -467,7 +492,11 @@ namespace pf {
   void TaskScheduler::schedule(Task &task) {
     // the scheduler has a reference on the task now
     task.refInc();
-    wsQueues[this->threadID].insert(task);
+    const uint16 affinity = task.getAffinity();
+    if (affinity > this->queueNum)
+      wsQueues[this->threadID].insert(task);
+    else
+      afQueues[affinity].insert(task);
   }
 
   TaskScheduler::~TaskScheduler(void) {
