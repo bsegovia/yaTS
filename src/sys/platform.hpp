@@ -279,10 +279,7 @@ namespace pf
     return true;
   }
 
-  template<> INLINE uint32
-  isPowerOf<2>(uint32 i) {
-    return ((i - 1) & i) == 0;
-  }
+  template<> INLINE uint32 isPowerOf<2>(uint32 i) { return ((i-1)&i) == 0; }
 
 #define ALIGNED_CLASS                                               \
 public:                                                             \

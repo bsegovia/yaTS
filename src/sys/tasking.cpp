@@ -46,30 +46,16 @@ namespace pf {
     ALIGNED_CLASS
   };
 
-  /*! A task may be used in two modes:
-   * - Work stealing. Only the owner can push tasks. The owner picks up tasks in
-   *   depth first order (LIFO). Stealers pick them in breadth first order
-   *   (FIFO).
-   * - Affinity. Here, only the owner can *execute* tasks. Task are inserted and
-   *   removed in a FIFO way.
-   */
-  enum TaskQueueMode {
-    WORK_STEALING_MODE = 0,
-    AFFINITY_MODE      = 1
-  };
-
   /*! Structure used to issue ready-to-process tasks */
-  template <int elemNum, TaskQueueMode mode>
-  class ALIGNED(CACHE_LINE) TaskQueue
+  template <int elemNum>
+  struct ALIGNED(CACHE_LINE) TaskQueue
   {
   public:
-    INLINE TaskQueue(void)
-#if PF_TASK_STATICTICS
-      : statInsertNum(0), statGetNum(0), statStealNum(0)
-#endif /* PF_TASK_STATICTICS */
-      {
-        for (size_t i = 0; i < NUM_PRIORITY; ++i) head[i] = tail[i] = 0;
-      }
+    INLINE TaskQueue(void) {
+      for (size_t i = 0; i < NUM_PRIORITY; ++i) head[i] = tail[i] = 0;
+    }
+
+  protected:
     /*! Return the bit mask of the four queues:
      *  - 1 if there is any task
      *  - 0 if empty
@@ -81,24 +67,46 @@ namespace pf {
       return _mm_movemask_ps(_mm_castsi128_ps(len));
     }
 
+    Task* tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
+    MutexActive mutex;                  //!< Not lock-free right now
+    union {
+      INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
+      volatile int32 x[NUM_PRIORITY];
+      volatile __m128i v;
+    } head, tail;
+  };
+
+  /*! For work stealing:
+   *  - only the owner (ie the victim) inserts tasks
+   *  - the owner picks up tasks in depth first order (LIFO)
+   *  - the stealers pick up tasks in breadth first order (FIFO)
+   */
+  template <int elemNum>
+  struct TaskWorkStealingQueue : TaskQueue<elemNum> {
+    TaskWorkStealingQueue(void)
+#if PF_TASK_STATICTICS
+      : statInsertNum(0), statGetNum(0), statStealNum(0)
+#endif /* PF_TASK_STATICTICS */
+    {}
+
     /*! No need to lock here since only the owner can push a task */
     INLINE void insert(Task &task) {
       const TaskPriority prio = task.getPriority();
       assert(head[prio] - tail[prio] < elemNum);
-      tasks[prio][head[prio] % elemNum] = &task;
-      head[prio]++;
+      this->tasks[prio][this->head[prio] % elemNum] = &task;
+      this->head[prio]++;
       IF_TASK_STATISTICS(statInsertNum++);
     }
 
     /*! Both stealers and the victim can pick up a task: we lock */
     INLINE Task* get(void) {
       if (this->getActiveMask() == 0) return NULL;
-      Lock<MutexType> lock(mutex);
+      Lock<MutexActive> lock(this->mutex);
       const int mask = this->getActiveMask();
       if (mask == 0) return NULL;
       const TaskPriority prio = TaskPriority(__bsf(mask));
-      const int32 index = --head[prio];
-      Task* task = tasks[prio][index % elemNum];
+      const int32 index = --this->head[prio];
+      Task* task = this->tasks[prio][index % elemNum];
       IF_TASK_STATISTICS(statGetNum++);
       return task;
     }
@@ -106,12 +114,12 @@ namespace pf {
     /*! Idem: we lock */
     INLINE Task* steal(void) {
       if (this->getActiveMask() == 0) return NULL;
-      Lock<MutexType> lock(mutex);
+      Lock<MutexActive> lock(this->mutex);
       const int mask = this->getActiveMask();
       if (mask == 0) return NULL;
       const TaskPriority prio = TaskPriority(__bsf(mask));
-      const int32 index = tail[prio]++;
-      Task* stolen = tasks[prio][index % elemNum];
+      const int32 index = this->tail[prio]++;
+      Task* stolen = this->tasks[prio][index % elemNum];
       IF_TASK_STATISTICS(statStealNum++);
       return stolen;
     }
@@ -124,16 +132,43 @@ namespace pf {
     }
     Atomic32 statInsertNum, statGetNum, statStealNum;
 #endif /* PF_TASK_STATICTICS */
+  };
 
-  private:
-    typedef MutexActive MutexType;
-    Task* tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
-    MutexType mutex;                    //!< Not lock-free right now
-    union {
-      INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
-      volatile int32 x[NUM_PRIORITY];
-      volatile __m128i v;
-    } head, tail;
+  template <int elemNum>
+  struct TaskAffinityQueue : TaskQueue<elemNum> {
+    TaskAffinityQueue (void)
+#if PF_TASK_STATICTICS
+      : statInsertNum(0), statGetNum(0)
+#endif /* PF_TASK_STATICTICS */
+    {}
+
+    /*! All threads can insert a task. We need to lock */
+    INLINE void insert(Task &task) {
+      const TaskPriority prio = task.getPriority();
+      assert(head[prio] - tail[prio] < elemNum);
+      Lock<MutexActive> lock(this->mutex);
+      this->tasks[prio][this->head[prio] % elemNum] = &task;
+      this->head[prio]++;
+      IF_TASK_STATISTICS(statInsertNum++);
+    }
+
+    /*! Only the owner can pick up tasks. No need to lock */
+    INLINE Task* get(void) {
+      const int mask = this->getActiveMask();
+      if (mask == 0) return NULL;
+      const TaskPriority prio = TaskPriority(__bsf(mask));
+      const int32 index = this->tail[prio]++;
+      Task* task = this->tasks[prio][index % elemNum];
+      IF_TASK_STATISTICS(statGetNum++);
+      return task;
+    }
+#if PF_TASK_STATICTICS
+    void printStats(void) {
+      std::cout << "insertNum " << statInsertNum <<
+                   ", getNum " << statGetNum << std::endl();
+    }
+    Atomic32 statInsertNum, statGetNum;
+#endif /* PF_TASK_STATICTICS */
   };
 
   /*! Handle the scheduling of all tasks. We basically implement here a
@@ -175,11 +210,9 @@ namespace pf {
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
     enum { queueSize = 2048 };    //!< Number of task per queue
-    typedef TaskQueue<queueSize,WORK_STEALING_MODE> TaskWSQueue;
-    typedef TaskQueue<queueSize,AFFINITY_MODE> TaskAffinityQueue;
     static THREAD uint32 threadID;//!< ThreadID for each thread
-    TaskWSQueue *wsQueues;        //!< 1 queue per thread
-    TaskAffinityQueue *afQueues;  //!< 1 queue per thread
+    TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
+    TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
     FastRand *random;             //!< 1 random generator per thread
     thread_t *threads;            //!< All threads currently running
     size_t threadNum;             //!< Total number of threads running
@@ -412,8 +445,8 @@ namespace pf {
 
     // We have a work queue for the main thread too
     this->queueNum = threadNum+1;
-    this->wsQueues = NEW_ARRAY(TaskWSQueue, queueNum);
-    this->afQueues = NEW_ARRAY(TaskAffinityQueue, queueNum);
+    this->wsQueues = NEW_ARRAY(TaskWorkStealingQueue<queueSize>, queueNum);
+    this->afQueues = NEW_ARRAY(TaskAffinityQueue<queueSize>, queueNum);
 
     // Also one random generator for *every* thread
     this->random = NEW_ARRAY(FastRand, queueNum);
@@ -456,9 +489,14 @@ namespace pf {
   THREAD uint32 TaskScheduler::threadID = 0;
 
   Task* TaskScheduler::getTask(int threadID) {
-    Task *task = this->wsQueues[threadID].get();
+    // Task with affinities have the priority
+    Task *task = this->afQueues[threadID].get();
     if (task)
       return task;
+    // Then, our own tasks
+    else if ((task = this->wsQueues[threadID].get()) != NULL)
+      return task;
+    // Then, we try to steal some task from another thread
     else {
       const unsigned long index = this->random[threadID].rand() % queueNum;
       return this->wsQueues[index].steal();

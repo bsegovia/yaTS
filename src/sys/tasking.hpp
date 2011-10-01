@@ -29,7 +29,7 @@ namespace pf {
   public:
     /*! It can complete one task and can be continued by one other task */
     INLINE Task(void) :
-      toStart(1), toEnd(1), priority(NORMAL_PRIORITY), affinity(-1) {}
+      toStart(1), toEnd(1), priority(NORMAL_PRIORITY), affinity(0xffff) {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
     /*! Now the task is built and is allowed to be scheduled */
@@ -52,7 +52,7 @@ namespace pf {
     INLINE void setPriority(TaskPriority prio)  { this->priority = prio; }
     INLINE void setAffinity(int32 affi)         { this->affinity = affi; }
     INLINE TaskPriority getPriority(void) const { return this->priority; }
-    INLINE int16 getAffinity(void)        const { return this->affinity; }
+    INLINE uint16 getAffinity(void)       const { return this->affinity; }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
     /*! Tasks use a scalable fixed size allocator */
