@@ -7,7 +7,7 @@
 #include <vector>
 #include <cstdlib>
 
-/* One important remark here about reference counting. Tasks are referenced
+/* One important remark about reference counting. Tasks are referenced
  * counted but we do not use Ref<Task> here. This is for performance reasons.
  * We therefore *manually* handle the extra references the scheduler may have
  * on a task. This is nasty but maintains a reasonnable speed in the system.
@@ -21,10 +21,10 @@
 #endif
 
 namespace pf {
+
   ///////////////////////////////////////////////////////////////////////////
   /// Declaration of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
-
   class Task;          // Basically an asynchronous function with dependencies
   class TaskSet;       // Idem but can be run N times
   class TaskAllocator; // Dedicated to allocate tasks and task sets
@@ -95,7 +95,7 @@ namespace pf {
     {}
 
     /*! No need to lock here since only the owner can push a task */
-    INLINE void insert(Task &task);
+    INLINE bool insert(Task &task);
     /*! Both stealers and the victim can pick up a task: we lock */
     INLINE Task* get(void);
     /*! Idem: we lock */
@@ -124,7 +124,7 @@ namespace pf {
     {}
 
     /*! All threads can insert a task. We need to lock */
-    INLINE void insert(Task &task);
+    INLINE bool insert(Task &task);
     /*! Only the owner can pick up tasks. No need to lock */
     INLINE Task* get(void);
 
@@ -157,6 +157,8 @@ namespace pf {
     INLINE uint32 getThreadNum(void) { return this->threadNum; }
     /*! Try to get a task from all the current queues */
     INLINE Task* getTask(int threadID);
+    /*! Run the task and recursively handle the tasks to start and to end */
+    void runTask(Task *task);
     /*! Data provided to each thread */
     struct Thread {
       Thread (size_t tid, TaskScheduler &scheduler_) :
@@ -267,7 +269,7 @@ namespace pf {
     void deallocate(void *ptr);
     enum { maxHeap = TaskStorage::maxHeap };
     enum { maxSize = 1 << maxHeap };
-    TaskStorage *local;  //!< Local heaps (per thread and per size)
+    TaskStorage *local;    //!< Local heaps (per thread and per size)
     void *global[maxHeap]; //!< Global heap shared by all threads
     MutexActive mutex;     //!< To protect the global heap
     uint32 threadNum;      //!< One thread storage per thread
@@ -277,12 +279,14 @@ namespace pf {
   /// Implementation of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
   template<int elemNum>
-  void TaskWorkStealingQueue<elemNum>::insert(Task &task) {
+  bool TaskWorkStealingQueue<elemNum>::insert(Task &task) {
     const TaskPriority prio = task.getPriority();
-    assert(head[prio] - tail[prio] < elemNum);
+    if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
+      return false;
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
+    return true;
   }
 
   template<int elemNum>
@@ -312,13 +316,17 @@ namespace pf {
   }
 
   template<int elemNum>
-  void TaskAffinityQueue<elemNum>::insert(Task &task) {
+  bool TaskAffinityQueue<elemNum>::insert(Task &task) {
     const TaskPriority prio = task.getPriority();
-    assert(head[prio] - tail[prio] < elemNum);
+    // No double check here (I mean, before and after the lock. We just take the
+    // optimistic approach ie we suppose the queue is never full)
     Lock<MutexActive> lock(this->mutex);
+    if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
+      return false;
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
+    return true;
   }
 
   template<int elemNum>
@@ -493,10 +501,34 @@ namespace pf {
     // the scheduler has a reference on the task now
     task.refInc();
     const uint16 affinity = task.getAffinity();
+    // Case 1 -> no affinity, we have to push it in our own queue
     if (affinity > this->queueNum)
-      wsQueues[this->threadID].insert(task);
-    else
-      afQueues[affinity].insert(task);
+      // Full queue, we simply execute tasks from our queue to empty it
+      while (UNLIKELY(!wsQueues[this->threadID].insert(task))) {
+        Task *someTask = wsQueues[this->threadID].get();
+        if (someTask)
+          this->runTask(someTask);
+      }
+    // Case 2 -> this task has an affinity. So, it must go to the affinity queue
+    // of the thread
+    else while (UNLIKELY(!afQueues[affinity].insert(task))) {
+        // Case 1a -> great, this is our queue, we can directly try to empty the
+        // queue a bit
+        if (this->threadID == affinity) {
+          Task *someTask = afQueues[affinity].get();
+          if (someTask)
+            this->runTask(someTask);
+        // Case 1b -> this is not our queue unfortunately. We *cannot* pick up a
+        // task from it. However, we cannot wait otherwise, we may deadlock the
+        // system (typically, if the thread owning this queue is also waiting on
+        // another queue. The only strategy here is to recurse and make the
+        // system progress by picking up *any* task we may find
+        } else {
+          Task *someTask = this->getTask(this->threadID);
+          if (someTask)
+            this->runTask(someTask);
+        }
+      }
   }
 
   TaskScheduler::~TaskScheduler(void) {
@@ -532,6 +564,34 @@ namespace pf {
     }
   }
 
+  void TaskScheduler::runTask(Task *task) {
+    // Execute the function
+    task->run();
+    Task *toRelease = task;
+
+    // Explore the completions and runs all continuations if any
+    do {
+      const atomic_t stillRunning = --task->toEnd;
+
+      // We are done here
+      if (stillRunning == 0) {
+        // Start the tasks if they become ready
+        if (task->toBeStarted) {
+          task->toBeStarted->toStart--;
+          if (task->toBeStarted->toStart == 0)
+            this->schedule(*task->toBeStarted);
+        }
+        // Traverse all completions to signal we are done
+        task = task->toBeEnded.ptr;
+      }
+      else
+        task = NULL;
+    } while (task);
+
+    // run function is counterpart of schedule. We remove one ref
+    if (toRelease->refDec()) DELETE(toRelease);
+  }
+
   void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
   {
     threadID = thread->tid;
@@ -546,32 +606,7 @@ namespace pf {
         if (task) break;
         if (UNLIKELY(This->dead)) goto end;
       }
-
-      // Execute the function
-      task->run();
-      Task *toRelease = task;
-
-      // Explore the completions and runs all continuations if any
-      do {
-        const atomic_t stillRunning = --task->toEnd;
-
-        // We are done here
-        if (stillRunning == 0) {
-          // Start the tasks if they become ready
-          if (task->toBeStarted) {
-            task->toBeStarted->toStart--;
-            if (task->toBeStarted->toStart == 0)
-              This->schedule(*task->toBeStarted);
-          }
-          // Traverse all completions to signal we are done
-          task = task->toBeEnded.ptr;
-        }
-        else
-          task = NULL;
-      } while (task);
-
-      // run function is counterpart of schedule. We remove one ref
-      if (toRelease->refDec()) DELETE(toRelease);
+      This->runTask(task);
     }
   end:
     DELETE(thread);
