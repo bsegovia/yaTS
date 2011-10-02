@@ -7,7 +7,8 @@
 #define START_UTEST(TEST_NAME)                          \
 void TEST_NAME(void)                                    \
 {                                                       \
-  std::cout << "starting " << #TEST_NAME << std::endl;
+  std::cout << std::endl << "starting " <<              \
+              #TEST_NAME << std::endl;
 
 #define END_UTEST(TEST_NAME)                            \
   std::cout << "ending " << #TEST_NAME << std::endl;    \
@@ -28,7 +29,7 @@ public:
   virtual void run(void) { interruptTaskingSystem(); }
 };
 
-START_UTEST(dummyTest)
+START_UTEST(TestDummy)
   startTaskingSystem();
   Task *done = NEW(DoneTask);
   Task *nothing = NEW(NothingTask);
@@ -37,7 +38,7 @@ START_UTEST(dummyTest)
   nothing->done();
   enterTaskingSystem();
   endTaskingSytem();
-END_UTEST(dummyTest)
+END_UTEST(TestDummy)
 
 ///////////////////////////////////////////////////////////////////////////////
 // Simplest taskset test. An array is filled by each worker
@@ -50,7 +51,7 @@ public:
   uint32 *array;
 };
 
-START_UTEST(taskSetTest)
+START_UTEST(TestTaskSet)
   const size_t elemNum = 1 << 20;
   startTaskingSystem();
   uint32 *array = NEW_ARRAY(uint32, elemNum);
@@ -63,9 +64,9 @@ START_UTEST(taskSetTest)
   enterTaskingSystem();
   endTaskingSytem();
   for (size_t i = 0; i < elemNum; ++i)
-    FATAL_IF(array[i] == 0, "taskSetTest failed");
+    FATAL_IF(array[i] == 0, "TestTaskSet failed");
   DELETE_ARRAY(array);
-END_UTEST(taskSetTest)
+END_UTEST(TestTaskSet)
 
 ///////////////////////////////////////////////////////////////////////////////
 // We create a binary tree of tasks here. Each task spawn a two children upto a
@@ -130,7 +131,7 @@ void CascadeNodeTask::run(void) {
 
 /*! For both tree tests */
 template<typename NodeType>
-START_UTEST(treeTest)
+START_UTEST(TestTree)
   startTaskingSystem();
   Atomic value(0u);
   std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
@@ -144,8 +145,8 @@ START_UTEST(treeTest)
   t = getSeconds() - t;
   std::cout << t * 1000. << " ms" << std::endl;
   endTaskingSytem();
-  FATAL_IF(value != (1 << maxLevel), "treeTest failed");
-END_UTEST(treeTest)
+  FATAL_IF(value != (1 << maxLevel), "TestTree failed");
+END_UTEST(TestTree)
 
 ///////////////////////////////////////////////////////////////////////////////
 // We try to stress the internal allocator here
@@ -167,7 +168,7 @@ void AllocateTask::run(size_t elemID) {
   }
 }
 
-START_UTEST(allocatorTest)
+START_UTEST(TestAllocator)
   startTaskingSystem();
   Task *done = NEW(DoneTask);
   Task *allocate = NEW(AllocateTask, 1 << 10);
@@ -176,18 +177,57 @@ START_UTEST(allocatorTest)
   allocate->done();
   enterTaskingSystem();
   endTaskingSytem();
-END_UTEST(allocatorTest)
+END_UTEST(TestAllocator)
+
+///////////////////////////////////////////////////////////////////////////////
+// We are making the queue full to make the system recurse to empty it
+///////////////////////////////////////////////////////////////////////////////
+class FullTask : public Task {
+public:
+  enum { taskToSpawn = 1u << 16u };
+  FullTask(const char *name, Atomic &counter, int lvl = 0) :
+    Task(name), counter(counter), lvl(lvl) {}
+  ~FullTask(void) { lvl = 0xdead; }
+  virtual void run(void) {
+    if (lvl == 0)
+      for (size_t i = 0; i < taskToSpawn; ++i) {
+        Task *task = NEW(FullTask, "FullTaskLvl1", counter, 1);
+        task->ends(this);
+        task->done();
+      }
+    else
+      counter++;
+  }
+  Atomic &counter;
+  int lvl;
+};
+
+START_UTEST(TestFullQueue)
+  Atomic counter(0u);
+  startTaskingSystem();
+  Task *done = NEW(DoneTask);
+  for (size_t i = 0; i < 64; ++i) {
+    Task *task = NEW(FullTask, "FullTask", counter);
+    task->starts(done);
+    task->done();
+  }
+  done->done();
+  enterTaskingSystem();
+  endTaskingSytem();
+  FATAL_IF (counter != 64 * FullTask::taskToSpawn, "TestFullQueue failed");
+END_UTEST(TestFullQueue)
 
 int main(int argc, char **argv)
 {
-  std::cout << sizeof(Task) << std::endl;
-  std::cout << __bsf(1) << std::endl;
   startMemoryDebugger();
-  dummyTest();
-  treeTest<NodeTask>();
-  treeTest<CascadeNodeTask>();
-  taskSetTest();
-  allocatorTest();
+
+  TestDummy();
+  TestTree<NodeTask>();
+  TestTree<CascadeNodeTask>();
+  TestTaskSet();
+  TestAllocator();
+  TestFullQueue();
+
   dumpAlloc();
   endMemoryDebugger();
   return 0;

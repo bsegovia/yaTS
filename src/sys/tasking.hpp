@@ -28,8 +28,10 @@ namespace pf {
   {
   public:
     /*! It can complete one task and can be continued by one other task */
-    INLINE Task(void) :
-      toStart(1), toEnd(1), priority(NORMAL_PRIORITY), affinity(0xffff) {}
+    INLINE Task(const char *taskName = NULL) :
+      //name(taskName),
+      toStart(1), toEnd(1),
+      priority(NORMAL_PRIORITY), affinity(0xffff) {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
     /*! Now the task is built and is allowed to be scheduled */
@@ -66,6 +68,7 @@ namespace pf {
     friend class TaskScheduler; //!< Needs to access everything
     Ref<Task> toBeEnded;        //!< Signals it when finishing
     Ref<Task> toBeStarted;      //!< Triggers it when ready
+    //const char *name;           //!< Debug facility mostly
     Atomic32 toStart;           //!< MBZ before starting
     Atomic32 toEnd;             //!< MBZ before ending
     TaskPriority priority;      //!< Task priority
@@ -77,7 +80,8 @@ namespace pf {
   {
   public:
     /*! elemNum is the number of times to execute the run function */
-    INLINE TaskSet(size_t elemNum) : elemNum(elemNum) {}
+    INLINE TaskSet(size_t elemNum, const char *name = NULL) :
+      Task(name), elemNum(elemNum) {}
     /*! This function is user-specified */
     virtual void run(size_t elemID) = 0;
 

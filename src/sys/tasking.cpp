@@ -31,23 +31,9 @@ namespace pf {
 
   /*! Fast random number generator (TODO find something that works) */
   struct ALIGNED(CACHE_LINE) FastRand {
-    FastRand(void) { x = rand(); y = rand(); z = rand(); }
-    unsigned long rand(void) {
-#if 0
-      unsigned long t;
-      x ^= x << 16;
-      x ^= x >> 5;
-      x ^= x << 1;
-      t = x;
-      x = y;
-      y = z;
-      z = t ^ x ^ y;
-#else
-      ++z;
-#endif
-      return z;
-    }
-    unsigned long x, y, z;
+    FastRand(void) { z = rand(); }
+    INLINE unsigned long rand(void) { return ++z; }
+    unsigned long z;
     ALIGNED_CLASS
   };
 
@@ -64,16 +50,16 @@ namespace pf {
     /*! Return the bit mask of the four queues:
      *  - 1 if there is any task
      *  - 0 if empty
-     *  Since we properly sort priorities from 0 to 3, using bit scan forward will
-     *  return the first non-empty queue with the highest priority
+     *  Since we properly sort priorities from 0 to 3, using bit scan forward
+     *  will return the first non-empty queue with the highest priority
      */
     INLINE int getActiveMask(void) const {
       const __m128i len = _mm_sub_epi32(tail.v, head.v);
       return _mm_movemask_ps(_mm_castsi128_ps(len));
     }
 
-    Task* tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
-    MutexActive mutex;                  //!< Not lock-free right now
+    Task * tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
+    MutexActive mutex;                   //!< Not lock-free right now
     union {
       INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
       volatile int32 x[NUM_PRIORITY];
@@ -95,11 +81,11 @@ namespace pf {
     {}
 
     /*! No need to lock here since only the owner can push a task */
-    INLINE bool insert(Task &task);
+    bool insert(Task &task);
     /*! Both stealers and the victim can pick up a task: we lock */
-    INLINE Task* get(void);
+    Task* get(void);
     /*! Idem: we lock */
-    INLINE Task* steal(void);
+    Task* steal(void);
 
 #if PF_TASK_STATICTICS
     void printStats(void) {
@@ -124,14 +110,14 @@ namespace pf {
     {}
 
     /*! All threads can insert a task. We need to lock */
-    INLINE bool insert(Task &task);
+    bool insert(Task &task);
     /*! Only the owner can pick up tasks. No need to lock */
-    INLINE Task* get(void);
+    Task* get(void);
 
 #if PF_TASK_STATICTICS
     void printStats(void) {
       std::cout << "insertNum " << statInsertNum <<
-                   ", getNum " << statGetNum << std::endl();
+                   ", getNum " << statGetNum << std::endl;
     }
     Atomic32 statInsertNum, statGetNum;
 #endif /* PF_TASK_STATICTICS */
@@ -156,7 +142,7 @@ namespace pf {
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getThreadNum(void) { return this->threadNum; }
     /*! Try to get a task from all the current queues */
-    INLINE Task* getTask(int threadID);
+    INLINE Task* getTask(void);
     /*! Run the task and recursively handle the tasks to start and to end */
     void runTask(Task *task);
     /*! Data provided to each thread */
@@ -173,11 +159,15 @@ namespace pf {
     static void threadFunction(Thread *thread);
     /*! Schedule a task which is now ready to execute */
     INLINE void schedule(Task &task);
+    /*! Try to push a task in the queue. Returns true if OK, false if the queues
+     *  are full
+     */
+    INLINE bool trySchedule(Task &task);
 
     friend class Task;            //!< Tasks ...
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
-    enum { queueSize = 2048 };    //!< Number of task per queue
+    enum { queueSize = 2 };       //!< Number of task per queue
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
     TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
@@ -239,8 +229,8 @@ namespace pf {
 
   private:
     friend class TaskAllocator;
-    enum { logChunkSize = 12 };            //!< log2(4KB)
-    enum { chunkSize = 1<< logChunkSize }; //!< 4KB when taking memory from std
+    enum { logChunkSize = 12 };           //!< log2(4KB)
+    enum { chunkSize = 1<<logChunkSize }; //!< 4KB when taking memory from std
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
     TaskAllocator *allocator;    //!< Handles global heap
     void *chunk[maxHeap];        //!< One heap per size
@@ -278,6 +268,18 @@ namespace pf {
   ///////////////////////////////////////////////////////////////////////////
   /// Implementation of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
+
+  // Well. To be honest, this code is highly non-portable and very x86 specific.
+  // There is no fence and there is no lock when the thread is modifying
+  // the head (for both queues). Not sure this is really serious. A clean
+  // ABP lock free queue is clearly the way to go anyway for the works stealing
+  // part. Or, I should lock everything properly to make it portable (with
+  // proper fences in the spin lock for more relaxed memory models). The idea on
+  // x86 is to use the very strong memory model combined with use of ...
+  // volatiles properly ordered. As a reminder for the memory model:
+  // - Loads are not reordered with other loads
+  // - Stores are not reordered with other stores
+  // - Stores are not reordered with older loads
   template<int elemNum>
   bool TaskWorkStealingQueue<elemNum>::insert(Task &task) {
     const TaskPriority prio = task.getPriority();
@@ -309,8 +311,9 @@ namespace pf {
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const TaskPriority prio = TaskPriority(__bsf(mask));
-    const int32 index = this->tail[prio]++;
+    const int32 index = this->tail[prio];
     Task* stolen = this->tasks[prio][index % elemNum];
+    this->tail[prio]++;
     IF_TASK_STATISTICS(statStealNum++);
     return stolen;
   }
@@ -331,11 +334,12 @@ namespace pf {
 
   template<int elemNum>
   Task* TaskAffinityQueue<elemNum>::get(void) {
+    if (this->getActiveMask() == 0) return NULL;
+    Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
-    if (mask == 0) return NULL;
     const TaskPriority prio = TaskPriority(__bsf(mask));
-    const int32 index = this->tail[prio]++;
-    Task* task = this->tasks[prio][index % elemNum];
+    Task* task = this->tasks[prio][this->tail[prio] % elemNum];
+    this->tail[prio]++;
     IF_TASK_STATISTICS(statGetNum++);
     return task;
   }
@@ -345,6 +349,7 @@ namespace pf {
     for (size_t i = 0; i < threadNum; ++i) this->local[i].allocator = this;
     for (size_t i = 0; i < maxHeap; ++i) this->global[i] = NULL;
   }
+
   TaskAllocator::~TaskAllocator(void) {
 #if PF_TASK_STATICTICS
     for (size_t i = 0; i < threadNum; ++i) this->local[i].printStats();
@@ -370,7 +375,7 @@ namespace pf {
     IF_TASK_STATISTICS(statNewChunkNum++);
     // We store the size of the elements in the chunk header
     const uint32 elemSize = 1 << chunkID;
-    char *chunk = (char *) ALIGNED_MALLOC(chunkSize, chunkSize);
+    char *chunk = (char *) ALIGNED_MALLOC(2*chunkSize, chunkSize);
 
     // We store this pointer to free it later while deleting the task
     // allocator
@@ -384,7 +389,7 @@ namespace pf {
     *(void**) data = NULL; // Last element of the list is the first in chunk
     void *pred = data;
     data += elemSize;
-    while (data < end) {
+    while (data + elemSize <= end) {
       *(void**) data = pred;
       pred = data;
       data += elemSize;
@@ -420,7 +425,6 @@ namespace pf {
   }
 
   void TaskStorage::popGlobal(uint32 chunkID) {
-    IF_TASK_STATISTICS(statPopGlobalNum++);
     void *list = NULL;
     assert(this->chunk[chunkID] == NULL);
     if (allocator->global[chunkID] == NULL) return;
@@ -436,6 +440,7 @@ namespace pf {
     // This is our new chunk
     this->chunk[chunkID] = list;
     this->currSize[chunkID] = ((uintptr_t *) list)[2];
+    IF_TASK_STATISTICS(statPopGlobalNum++);
   }
 
   void* TaskStorage::allocate(size_t sz) {
@@ -497,38 +502,52 @@ namespace pf {
     }
   }
 
+  bool TaskScheduler::trySchedule(Task &task) {
+    const uint16 affinity = task.getAffinity();
+    bool success;
+    task.refInc();
+    if (affinity >= this->queueNum)
+      success = wsQueues[this->threadID].insert(task);
+    else
+      success = afQueues[affinity].insert(task);
+    if (!success && task.refDec()) DELETE(&task);
+    return success;
+  }
+
   void TaskScheduler::schedule(Task &task) {
     // the scheduler has a reference on the task now
     task.refInc();
     const uint16 affinity = task.getAffinity();
-    // Case 1 -> no affinity, we have to push it in our own queue
-    if (affinity > this->queueNum)
+    // Case 1 -> no affinity, we have to push it in our own queue (and we are
+    // the only one pushing tasks in this queue)
+    if (affinity >= this->queueNum)
       // Full queue, we simply execute tasks from our queue to empty it
       while (UNLIKELY(!wsQueues[this->threadID].insert(task))) {
+#if 0
         Task *someTask = wsQueues[this->threadID].get();
-        if (someTask)
-          this->runTask(someTask);
+        if (someTask) this->runTask(someTask);
+#endif
+        Task *someTask = this->getTask();
+        if (someTask) this->runTask(someTask);
       }
     // Case 2 -> this task has an affinity. So, it must go to the affinity queue
     // of the thread
     else while (UNLIKELY(!afQueues[affinity].insert(task))) {
-        // Case 1a -> great, this is our queue, we can directly try to empty the
-        // queue a bit
-        if (this->threadID == affinity) {
-          Task *someTask = afQueues[affinity].get();
-          if (someTask)
-            this->runTask(someTask);
-        // Case 1b -> this is not our queue unfortunately. We *cannot* pick up a
-        // task from it. However, we cannot wait otherwise, we may deadlock the
-        // system (typically, if the thread owning this queue is also waiting on
-        // another queue. The only strategy here is to recurse and make the
-        // system progress by picking up *any* task we may find
-        } else {
-          Task *someTask = this->getTask(this->threadID);
-          if (someTask)
-            this->runTask(someTask);
-        }
+      // Case 2a -> great, this is our queue, we can directly try to empty the
+      // queue a bit
+      if (this->threadID == affinity) {
+        Task *someTask = afQueues[affinity].get();
+        if (someTask) this->runTask(someTask);
+      // Case 2b -> this is not our queue unfortunately. We *cannot* pick up a
+      // task from it. However, we cannot wait otherwise, we may deadlock the
+      // system (typically, if the thread owning this queue is also waiting on
+      // another queue. The only strategy here is to recurse and make the
+      // system progress by picking up *any* task we may find
+      } else {
+        Task *someTask = this->getTask();
+        if (someTask) this->runTask(someTask);
       }
+    }
   }
 
   TaskScheduler::~TaskScheduler(void) {
@@ -549,17 +568,17 @@ namespace pf {
 
   THREAD uint32 TaskScheduler::threadID = 0;
 
-  Task* TaskScheduler::getTask(int threadID) {
+  Task* TaskScheduler::getTask() {
     // Task with affinities have the priority
-    Task *task = this->afQueues[threadID].get();
+    Task *task = this->afQueues[this->threadID].get();
     if (task)
       return task;
     // Then, our own tasks
-    else if ((task = this->wsQueues[threadID].get()) != NULL)
+    else if ((task = this->wsQueues[this->threadID].get()) != NULL)
       return task;
     // Then, we try to steal some task from another thread
     else {
-      const unsigned long index = this->random[threadID].rand() % queueNum;
+      const unsigned long index = this->random[this->threadID].rand()%queueNum;
       return this->wsQueues[index].steal();
     }
   }
@@ -600,13 +619,9 @@ namespace pf {
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
     for (;;) {
-      Task *task = NULL;
-      for (;;) {
-        task = This->getTask(threadID);
-        if (task) break;
-        if (UNLIKELY(This->dead)) goto end;
-      }
-      This->runTask(task);
+      Task *task = This->getTask();
+      if (task) This->runTask(task);
+      if (UNLIKELY(This->dead)) goto end;
     }
   end:
     DELETE(thread);
@@ -644,15 +659,13 @@ namespace pf {
     atomic_t curr;
     if (this->elemNum > 2) {
       this->toEnd += 2;
-      scheduler->schedule(*this);
-      scheduler->schedule(*this);
-      while ((curr = --this->elemNum) >= 0)
-        this->run(curr);
+      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
+      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
+      while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (this->elemNum > 1) {
       this->toEnd++;
-      scheduler->schedule(*this);
-      while ((curr = --this->elemNum) >= 0)
-        this->run(curr);
+      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
+      while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (--this->elemNum == 0)
       this->run(0);
   }
