@@ -167,7 +167,7 @@ namespace pf {
     friend class Task;            //!< Tasks ...
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
-    enum { queueSize = 2 };       //!< Number of task per queue
+    enum { queueSize = 1 };       //!< Number of task per queue
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
     TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
@@ -269,14 +269,15 @@ namespace pf {
   /// Implementation of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
 
-  // Well. To be honest, this code is highly non-portable and very x86 specific.
-  // There is no fence and there is no lock when the thread is modifying
-  // the head (for both queues). Not sure this is really serious. A clean
-  // ABP lock free queue is clearly the way to go anyway for the works stealing
-  // part. Or, I should lock everything properly to make it portable (with
-  // proper fences in the spin lock for more relaxed memory models). The idea on
-  // x86 is to use the very strong memory model combined with use of ...
-  // volatiles properly ordered. As a reminder for the memory model:
+  // Well, regarding the implementation of the two task queues (work stealing
+  // queues and FIFO affinity queues), this code is not really portable and
+  // somehow x86 specific. There is no fence and there is no lock when the
+  // thread is modifying the head (for WS queues) and the tail (for FIFO
+  // affinity queue). At least, a fast ABP lock free queue
+  // is clearly the way to go anyway for the works stealing part. Other than
+  // that, this code can be ported to other platforms but some fences should be
+  // added around volatile reads/writes. The thing is that x86s use a very
+  // strong memory model. As a reminder:
   // - Loads are not reordered with other loads
   // - Stores are not reordered with other stores
   // - Stores are not reordered with older loads
@@ -526,9 +527,10 @@ namespace pf {
 #if 0
         Task *someTask = wsQueues[this->threadID].get();
         if (someTask) this->runTask(someTask);
-#endif
+#else
         Task *someTask = this->getTask();
         if (someTask) this->runTask(someTask);
+#endif
       }
     // Case 2 -> this task has an affinity. So, it must go to the affinity queue
     // of the thread
@@ -539,9 +541,9 @@ namespace pf {
         Task *someTask = afQueues[affinity].get();
         if (someTask) this->runTask(someTask);
       // Case 2b -> this is not our queue unfortunately. We *cannot* pick up a
-      // task from it. However, we cannot wait otherwise, we may deadlock the
+      // task from it. Also, we cannot wait. Otherwise, we may deadlock the
       // system (typically, if the thread owning this queue is also waiting on
-      // another queue. The only strategy here is to recurse and make the
+      // another queue). The only strategy here is to recurse and make the
       // system progress by picking up *any* task we may find
       } else {
         Task *someTask = this->getTask();
