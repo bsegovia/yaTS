@@ -5,22 +5,19 @@ if (PF_USE_BLOB)
 else (PF_USE_BLOB)
   set (SRC
     utests.cpp
-    sys/filename.cpp
-    sys/library.cpp
     sys/thread.cpp
     sys/alloc.cpp
     sys/tasking.cpp
     sys/sysinfo.cpp
     sys/mutex.cpp
     sys/condition.cpp
-    sys/platform.cpp
-    sys/string.cpp)
+    sys/platform.cpp)
 endif (PF_USE_BLOB)
 include_directories (.)
 add_executable (app ${SRC})
 if (UNIX)
-  target_link_libraries(app ${GLUT_LIBRARY} pthread)
+  target_link_libraries(app pthread)
 else (UNIX)
-  target_link_libraries(app ${GLUT_LIBRARY})
+  target_link_libraries(app)
 endif (UNIX)
 
