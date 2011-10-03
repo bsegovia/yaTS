@@ -29,7 +29,7 @@ namespace pf {
   public:
     /*! It can complete one task and can be continued by one other task */
     INLINE Task(const char *taskName = NULL) :
-      //name(taskName),
+      name(taskName),
       toStart(1), toEnd(1),
       priority(NORMAL_PRIORITY), affinity(0xffff) {}
     /*! To override while specifying a task */
@@ -39,14 +39,14 @@ namespace pf {
     /*! The given task cannot *start* as long as this task is not done */
     INLINE void starts(Task *other) {
       if (UNLIKELY(other == NULL)) return;
-      assert(this->toBeStarted == false);
+      if (UNLIKELY(this->toBeStarted)) return; // already a task to start
       other->toStart++;
       this->toBeStarted = other;
     }
     /*! The given task cannot *end* as long as this task is not done */
     INLINE void ends(Task *other) {
       if (UNLIKELY(other == NULL)) return;
-      assert(this->toBeEnded == false);
+      if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
       other->toEnd++;
       this->toBeEnded = other;
     }
@@ -68,7 +68,7 @@ namespace pf {
     friend class TaskScheduler; //!< Needs to access everything
     Ref<Task> toBeEnded;        //!< Signals it when finishing
     Ref<Task> toBeStarted;      //!< Triggers it when ready
-    //const char *name;           //!< Debug facility mostly
+    const char *name;           //!< Debug facility mostly
     Atomic32 toStart;           //!< MBZ before starting
     Atomic32 toEnd;             //!< MBZ before ending
     TaskPriority priority;      //!< Task priority
