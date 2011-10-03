@@ -136,9 +136,11 @@ namespace pf {
     ~TaskScheduler(void);
 
     /*! Call by the main thread to enter the tasking system */
-    void go(void);
+    template <bool isMainThread> void go(void);
     /*! Interrupt all threads */
-    INLINE void die(void) { dead = true; }
+    INLINE void stopAll(void) { deadMain = dead = true; }
+    /*! Interrupt main thread only */
+    INLINE void stopMain(void) { deadMain = true; }
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getThreadNum(void) { return this->threadNum; }
     /*! Try to get a task from all the current queues */
@@ -156,6 +158,7 @@ namespace pf {
   private:
 
     /*! Function run by each thread */
+    template <bool isMainThread>
     static void threadFunction(Thread *thread);
     /*! Schedule a task which is now ready to execute */
     INLINE void schedule(Task &task);
@@ -176,6 +179,7 @@ namespace pf {
     size_t threadNum;             //!< Total number of threads running
     size_t queueNum;              //!< Number of queues (should be threadNum+1)
     volatile bool dead;           //!< The tasking system should quit
+    volatile bool deadMain;       //!< The main thread should return
   };
 
   /*! Allocator per thread */
@@ -202,12 +206,10 @@ namespace pf {
      *  allocate a new local chunk
      */
     INLINE void *allocate(size_t sz);
-
     /*! Free a task and put it in a free list. If too many tasks are
      *  deallocated, return a piece of it to the global heap
      */
     INLINE void deallocate(void *ptr);
-
     /*! Create a free list and store chunk information */
     void newChunk(uint32 chunkID);
     /*! Push back a group of tasks in the global heap */
@@ -476,6 +478,31 @@ namespace pf {
       this->pushGlobal(chunkID);
   }
 
+  template <bool isMainThread>
+  void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
+  {
+    threadID = thread->tid;
+    TaskScheduler *This = &thread->scheduler;
+
+    // We try to pick up a task from our queue and then we try to steal a task
+    // from other queues
+    for (;;) {
+      Task *task = This->getTask();
+      if (task) This->runTask(task);
+      if (isMainThread) {
+        if (UNLIKELY(This->deadMain))
+          goto end;
+      } else if (UNLIKELY(This->dead))
+        goto end;
+    }
+  end:
+    DELETE(thread);
+  }
+
+  // Explicitely instantiate both versions of the function
+  template void TaskScheduler::threadFunction<false>(TaskScheduler::Thread*);
+  template void TaskScheduler::threadFunction<true>(TaskScheduler::Thread*);
+
   TaskScheduler::TaskScheduler(int threadNum_) :
     wsQueues(NULL), afQueues(NULL), threads(NULL), dead(false)
   {
@@ -497,7 +524,7 @@ namespace pf {
       for (size_t i = 0; i < threadNum; ++i) {
         const int affinity = int(i+1);
         Thread *thread = NEW(Thread,i+1,*this);
-        thread_func threadFunc = (thread_func) threadFunction;
+        thread_func threadFunc = (thread_func) threadFunction<false>;
         threads[i] = createThread(threadFunc, thread, stackSize, affinity);
       }
     }
@@ -613,25 +640,10 @@ namespace pf {
     if (toRelease->refDec()) DELETE(toRelease);
   }
 
-  void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
-  {
-    threadID = thread->tid;
-    TaskScheduler *This = &thread->scheduler;
-
-    // We try to pick up a task from our queue and then we try to steal a task
-    // from other queues
-    for (;;) {
-      Task *task = This->getTask();
-      if (task) This->runTask(task);
-      if (UNLIKELY(This->dead)) goto end;
-    }
-  end:
-    DELETE(thread);
-  }
-
+  template<bool isMainThread>
   void TaskScheduler::go(void) {
     Thread *thread = NEW(Thread, 0, *this);
-    threadFunction(thread);
+    threadFunction<isMainThread>(thread);
   }
 
   static TaskScheduler *scheduler = NULL;
@@ -672,27 +684,32 @@ namespace pf {
       this->run(0);
   }
 
-  void startTaskingSystem(void) {
+  void TaskingSystemStart(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
     scheduler = NEW(TaskScheduler);
     allocator = NEW(TaskAllocator, scheduler->getThreadNum()+1);
   }
 
-  void enterTaskingSystem(void) {
-    FATAL_IF (scheduler == NULL, "scheduler not started");
-    scheduler->go();
-  }
-
-  void endTaskingSytem(void) {
+  void TaskingSystemEnd(void) {
     SAFE_DELETE(scheduler);
     SAFE_DELETE(allocator);
     scheduler = NULL;
     allocator = NULL;
   }
 
-  void interruptTaskingSystem(void) {
+  void TaskingSystemEnter(void) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
-    scheduler->die();
+    scheduler->go<true>();
+  }
+
+  void TaskingSystemInterruptMain(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->stopMain();
+  }
+
+  void TaskingSystemInterrupt(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->stopAll();
   }
 }
 

@@ -91,16 +91,19 @@ namespace pf {
   };
 
   /*! Mandatory before creating and running any task (MAIN THREAD) */
-  void startTaskingSystem(void);
+  void TaskingSystemStart(void);
 
   /*! Make the main thread enter the tasking system (MAIN THREAD) */
-  void enterTaskingSystem(void);
+  void TaskingSystemEnd(void);
 
-  /*! Cleanly deallocate and shutdown everything (MAIN THREAD) */
-  void endTaskingSytem(void);
+  /*! Make the main thread enter the tasking system (MAIN THREAD) */
+  void TaskingSystemEnter(void);
 
-  /*! Basically signal all threads to stop (THREAD SAFE) */
-  void interruptTaskingSystem(void);
+  /*! Signal the *main* thread only to stop (THREAD SAFE) */
+  void TaskingSystemInterruptMain(void);
+
+  /*! Signal *all* threads to stop (THREAD SAFE) */
+  void TaskingSystemInterrupt(void);
 
 } /* namespace pf */
 

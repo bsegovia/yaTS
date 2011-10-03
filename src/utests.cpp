@@ -26,18 +26,18 @@ public:
 
 class DoneTask : public Task {
 public:
-  virtual void run(void) { interruptTaskingSystem(); }
+  virtual void run(void) { TaskingSystemInterrupt(); }
 };
 
 START_UTEST(TestDummy)
-  startTaskingSystem();
+  TaskingSystemStart();
   Task *done = NEW(DoneTask);
   Task *nothing = NEW(NothingTask);
   nothing->starts(done);
   done->done();
   nothing->done();
-  enterTaskingSystem();
-  endTaskingSytem();
+  TaskingSystemEnter();
+  TaskingSystemEnd();
 END_UTEST(TestDummy)
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -53,7 +53,7 @@ public:
 
 START_UTEST(TestTaskSet)
   const size_t elemNum = 1 << 20;
-  startTaskingSystem();
+  TaskingSystemStart();
   uint32 *array = NEW_ARRAY(uint32, elemNum);
   for (size_t i = 0; i < elemNum; ++i) array[i] = 0;
   Task *done = NEW(DoneTask);
@@ -61,8 +61,8 @@ START_UTEST(TestTaskSet)
   taskSet->starts(done);
   done->done();
   taskSet->done();
-  enterTaskingSystem();
-  endTaskingSytem();
+  TaskingSystemEnter();
+  TaskingSystemEnd();
   for (size_t i = 0; i < elemNum; ++i)
     FATAL_IF(array[i] == 0, "TestTaskSet failed");
   DELETE_ARRAY(array);
@@ -132,7 +132,7 @@ void CascadeNodeTask::run(void) {
 /*! For both tree tests */
 template<typename NodeType>
 START_UTEST(TestTree)
-  startTaskingSystem();
+  TaskingSystemStart();
   Atomic value(0u);
   std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
   double t = getSeconds();
@@ -141,10 +141,10 @@ START_UTEST(TestTree)
   root->starts(done);
   done->done();
   root->done();
-  enterTaskingSystem();
+  TaskingSystemEnter();
   t = getSeconds() - t;
   std::cout << t * 1000. << " ms" << std::endl;
-  endTaskingSytem();
+  TaskingSystemEnd();
   FATAL_IF(value != (1 << maxLevel), "TestTree failed");
 END_UTEST(TestTree)
 
@@ -169,14 +169,14 @@ void AllocateTask::run(size_t elemID) {
 }
 
 START_UTEST(TestAllocator)
-  startTaskingSystem();
+  TaskingSystemStart();
   Task *done = NEW(DoneTask);
   Task *allocate = NEW(AllocateTask, 1 << 10);
   allocate->starts(done);
   done->done();
   allocate->done();
-  enterTaskingSystem();
-  endTaskingSytem();
+  TaskingSystemEnter();
+  TaskingSystemEnd();
 END_UTEST(TestAllocator)
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -204,7 +204,7 @@ public:
 
 START_UTEST(TestFullQueue)
   Atomic counter(0u);
-  startTaskingSystem();
+  TaskingSystemStart();
   Task *done = NEW(DoneTask);
   for (size_t i = 0; i < 64; ++i) {
     Task *task = NEW(FullTask, "FullTask", counter);
@@ -212,8 +212,8 @@ START_UTEST(TestFullQueue)
     task->done();
   }
   done->done();
-  enterTaskingSystem();
-  endTaskingSytem();
+  TaskingSystemEnter();
+  TaskingSystemEnd();
   FATAL_IF (counter != 64 * FullTask::taskToSpawn, "TestFullQueue failed");
 END_UTEST(TestFullQueue)
 
