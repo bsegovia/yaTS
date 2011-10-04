@@ -98,7 +98,7 @@
  * Self-Work-Stealing-Queue::critical Task      >
  * Self-Work-Stealing-Queue::high Task          >
  * Self-Work-Stealing-Queue::normal Task        >
- * Victim-Work-Stealing-Queue::low Task         >
+ * Self-Work-Stealing-Queue::low Task           >
  * Victim-Work-Stealing-Queue::critical Task    >
  * Victim-Work-Stealing-Queue::high Task        >
  * Victim-Work-Stealing-Queue::normal Task      >
