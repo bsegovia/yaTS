@@ -34,8 +34,8 @@ START_UTEST(TestDummy)
   Task *done = NEW(DoneTask);
   Task *nothing = NEW(NothingTask);
   nothing->starts(done);
-  done->done();
-  nothing->done();
+  done->scheduled();
+  nothing->scheduled();
   TaskingSystemEnter();
   TaskingSystemEnd();
 END_UTEST(TestDummy)
@@ -59,8 +59,8 @@ START_UTEST(TestTaskSet)
   Task *done = NEW(DoneTask);
   Task *taskSet = NEW(SimpleTaskSet, elemNum, array);
   taskSet->starts(done);
-  done->done();
-  taskSet->done();
+  done->scheduled();
+  taskSet->scheduled();
   TaskingSystemEnter();
   TaskingSystemEnd();
   for (size_t i = 0; i < elemNum; ++i)
@@ -96,8 +96,8 @@ void NodeTask::run(void) {
     Task *right = NEW(NodeTask, this->value, this->lvl+1, this->root);
     left->ends(this->root);
     right->ends(this->root);
-    left->done();
-    right->done();
+    left->scheduled();
+    right->scheduled();
   }
 }
 
@@ -124,8 +124,8 @@ void CascadeNodeTask::run(void) {
     Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1);
     left->ends(this);
     right->ends(this);
-    left->done();
-    right->done();
+    left->scheduled();
+    right->scheduled();
   }
 }
 
@@ -139,8 +139,8 @@ START_UTEST(TestTree)
   Task *done = NEW(DoneTask);
   Task *root = NEW(NodeType, value, 0);
   root->starts(done);
-  done->done();
-  root->done();
+  done->scheduled();
+  root->scheduled();
   TaskingSystemEnter();
   t = getSeconds() - t;
   std::cout << t * 1000. << " ms" << std::endl;
@@ -173,8 +173,8 @@ START_UTEST(TestAllocator)
   Task *done = NEW(DoneTask);
   Task *allocate = NEW(AllocateTask, 1 << 10);
   allocate->starts(done);
-  done->done();
-  allocate->done();
+  done->scheduled();
+  allocate->scheduled();
   TaskingSystemEnter();
   TaskingSystemEnd();
 END_UTEST(TestAllocator)
@@ -193,7 +193,7 @@ public:
       for (size_t i = 0; i < taskToSpawn; ++i) {
         Task *task = NEW(FullTask, "FullTaskLvl1", counter, 1);
         task->ends(this);
-        task->done();
+        task->scheduled();
       }
     else
       counter++;
@@ -209,9 +209,9 @@ START_UTEST(TestFullQueue)
   for (size_t i = 0; i < 64; ++i) {
     Task *task = NEW(FullTask, "FullTask", counter);
     task->starts(done);
-    task->done();
+    task->scheduled();
   }
-  done->done();
+  done->scheduled();
   TaskingSystemEnter();
   TaskingSystemEnd();
   FATAL_IF (counter != 64 * FullTask::taskToSpawn, "TestFullQueue failed");

@@ -170,7 +170,8 @@ namespace pf {
     friend class Task;            //!< Tasks ...
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
-    enum { queueSize = 512 };     //!< Number of task per queue
+    //enum { queueSize = 512 };     //!< Number of task per queue
+    enum { queueSize = 1 };     //!< Number of task per queue
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
     TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
@@ -533,49 +534,20 @@ namespace pf {
   bool TaskScheduler::trySchedule(Task &task) {
     const uint16 affinity = task.getAffinity();
     bool success;
-    task.refInc();
     if (affinity >= this->queueNum)
       success = wsQueues[this->threadID].insert(task);
     else
       success = afQueues[affinity].insert(task);
-    if (!success && task.refDec()) DELETE(&task);
     return success;
   }
 
   void TaskScheduler::schedule(Task &task) {
-    // the scheduler has a reference on the task now
+    // We pick up any tasks to make some free space for the task we are
+    // scheduling
     task.refInc();
-    const uint16 affinity = task.getAffinity();
-    // Case 1 -> no affinity, we have to push it in our own queue (and we are
-    // the only one pushing tasks in this queue)
-    if (affinity >= this->queueNum)
-      // Full queue, we simply execute tasks from our queue to empty it
-      while (UNLIKELY(!wsQueues[this->threadID].insert(task))) {
-#if 0
-        Task *someTask = wsQueues[this->threadID].get();
-        if (someTask) this->runTask(someTask);
-#else
-        Task *someTask = this->getTask();
-        if (someTask) this->runTask(someTask);
-#endif
-      }
-    // Case 2 -> this task has an affinity. So, it must go to the affinity queue
-    // of the thread
-    else while (UNLIKELY(!afQueues[affinity].insert(task))) {
-      // Case 2a -> great, this is our queue, we can directly try to empty the
-      // queue a bit
-      if (this->threadID == affinity) {
-        Task *someTask = afQueues[affinity].get();
-        if (someTask) this->runTask(someTask);
-      // Case 2b -> this is not our queue unfortunately. We *cannot* pick up a
-      // task from it. Also, we cannot wait. Otherwise, we may deadlock the
-      // system (typically, if the thread owning this queue is also waiting on
-      // another queue). The only strategy here is to recurse and make the
-      // system progress by picking up *any* task we may find
-      } else {
-        Task *someTask = this->getTask();
-        if (someTask) this->runTask(someTask);
-      }
+    while (UNLIKELY(!this->trySchedule(task))) {
+      Task *someTask = this->getTask();
+      if (someTask) this->runTask(someTask);
     }
   }
 
@@ -651,7 +623,7 @@ namespace pf {
   static TaskScheduler *scheduler = NULL;
   static TaskAllocator *allocator = NULL;
 
-  void Task::done(void) {
+  void Task::scheduled(void) {
     this->toStart--;
     if (this->toStart == 0) scheduler->schedule(*this);
   }
@@ -675,12 +647,20 @@ namespace pf {
     atomic_t curr;
     if (this->elemNum > 2) {
       this->toEnd += 2;
-      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
-      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
+      scheduler->schedule(*this);
+      // This is a bit tricky here. Basically, in the case the queue is full, we
+      // don't want to recurse and pick up the task set we just scheduled
+      // before. This may lead to an infinite recursion. So the second
+      // scheduling is only a try
+      this->refInc();
+      if (UNLIKELY(!scheduler->trySchedule(*this))) {
+        this->toEnd--;
+        this->refDec();
+      }
       while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (this->elemNum > 1) {
       this->toEnd++;
-      if (UNLIKELY(!scheduler->trySchedule(*this))) this->toEnd--;
+      scheduler->schedule(*this);
       while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (--this->elemNum == 0)
       this->run(0);

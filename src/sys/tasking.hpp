@@ -61,8 +61,8 @@ namespace pf {
     {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
-    /*! Now the task is built and is allowed to be scheduled */
-    void done(void);
+    /*! Task is built and will be ready when all start dependencies are over */
+    void scheduled(void);
     /*! The given task cannot *start* as long as this task is not done */
     INLINE void starts(Task *other) {
       if (UNLIKELY(other == NULL)) return;
