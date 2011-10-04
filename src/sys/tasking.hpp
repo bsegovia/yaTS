@@ -4,6 +4,95 @@
 #include "sys/ref.hpp"
 #include "sys/atomic.hpp"
 
+/*                 *** OVERVIEW OF THE TASKING SYSTEM ***
+ *
+ * Quick recap of what we have here. Basically, a "tasking system" here means
+ * the possibility to schedule and asynchronously run functions in shared memory
+ * "system threads". This is basically a thread pool. However, we try to propose
+ * more in this API by letting the user:
+ * 1 - Define *dependencies* between tasks
+ * 2 - Setup priorities for each task ie a higher priority task will be more
+ *     likely executed than a lower priority one
+ * 3 - Setup affinities for each of them ie a task can be "pinned" on some
+ *     specific hardware thread (typically useful when something depends on a
+ *     context like an OpenGL context)
+ *
+ * The core of this tasking system is a "Task". A task represent a function to
+ * call (to run) later. Each task can specify dependencies in two ways:
+ * 1 - "Start dependencies" specified (see below) by Task::starts. Basically, to
+ *     be able to start, a task must have all its start dependencies *ended*
+ * 2 - "End dependencies" specified (see below) by Task::ends. In that case, tgo
+ *     be able to finish, a task must have all its end dependencies *ended*
+ *
+ * Specifying dependencies in that way allows the user to *dynamically* (ie
+ * during the task execution) create a direct acyclic graph of tasks (DAG). One
+ * may look at the unit tests to see how it basically works.
+ *
+ * We also classicaly implement a TaskSet which is a function which can be run
+ * n times (concurrently on any number of threads). TaskSet are a particularly
+ * way to logically create n tasks in one chunk.
+ *
+ * Last feature we added is the ability to run *some* task (ie the user cannot
+ * decide what it will run) from a running task (ie from the run function of the
+ * task). The basic idea here is to overcome typical issues with tasking system:
+ * How do you handle asynchronous/non-blocking IO? You may want to reschedule a
+ * task if the IO takes too long. But in that case, how can you be sure that the
+ * scheduler is not going to run the task you just pushed? Our idea (to assert
+ * in later tests) is to offer the ability to run *something* already ready to
+ * hide the IO latency from the task itself. At least, you can keep the HW
+ * thread busy if you want to.
+ *
+ *                 *** SOME DETAILS ABOUT THE IMPLEMENTATION ***
+ *
+ * First thing is the commentaries in tasking.cpp which give some details about
+ * the implementation. Roughly the implementation is done around three
+ * components:
+ *
+ * 1 - A fast, distributed, fixed size growing pool to allocate / deallocate the
+ *     tasks. OK, to be honest, the fact it is a growing pool is a rather
+ *     aggressive approach which clearly should be refined later. Well, actually
+ *     it is damn fast. I think the idea to keep speed while reducing memory
+ *     footprint may be the implementation of a asynchronous reclaim using the
+ *     tasking system itself.
+ *
+ * 2 - A work-stealing technique for all tasks that do not have any affinity.
+ *     Basically, each HW thread in the thread pool has his own queue. Each
+ *     thread can push new task *only in its own queue*. When a thread tries to
+ *     find a ready task, it first tries to pick one from its queue in depth
+ *     first order. If its queue is empty, it tries to *steal* a task from
+ *     another HW thread in breadth first order. This approach strongly limits
+ *     the memory requirement (ie the number of task currently allocated in the
+ *     system) while also limiting the contention in the queues. Right now, the
+ *     queues still use spin locks but a classical ABP lock free queue is
+ *     clearly coming :-)
+ *
+ * 3 - A classical FIFO queue approach. Beside its work stealing queue, each
+ *     thread owns another FIFO dedicated to tasks with affinities. Basically,
+ *     this is more or less the opposite of work stealing: instead of pushing a
+ *     affinity task in its own queue, the thread just puts it in the queue
+ *     associated to the affinity
+ *
+ * Finally, note that we handle priorities in a somehow approximate way. Since
+ * the system is entirely distributed, it is extremely hard to ensure that, when
+ * a high priority task is ready somewhere in the system, it is going to be run
+ * as soon as possible. Since it is hard, we use an approximate scheduling
+ * strategy by *multiplexing* queues:
+ * 0 - If the user returns a task to run, we run it regardless anything else in
+ *     the system
+ * 1 - Then, we try to pick a task from our own affinity queues. The highest
+ *     priority task from these queues is picked up first
+ * 2 - If no task was found in 1, we try to pick a task from our own work
+ *     stealing queue. Here once again, we pick up the highest priority task
+ *     since the four queues (from low to critical) are multiplexed
+ * 3 - If no task was found in 2, we try to steal a task from a random other
+ *     queue. Here also, we take the one with the highest priority
+ *
+ * As a final note, this tasking system is basically a mix of ideas from TBB (of
+ * course :-) ), various tasking systems I used on Ps3 and also various tasking
+ * system I had the chance to use and experiment when I was at Intel Labs during
+ * the LRB era.
+ */
+
 #define PF_TASK_USE_DEDICATED_ALLOCATOR 1
 
 namespace pf {
@@ -36,10 +125,10 @@ namespace pf {
   struct TaskState {
     enum {
       NEW       = 0u,
-      READY     = 2u,
-      RUNNING   = 3u,
-      DONE      = 4u,
-      NUM       = 5u,
+      READY     = 1u,
+      RUNNING   = 2u,
+      DONE      = 3u,
+      NUM       = 4u,
       INVALID   = 0xffffu
     };
   };

@@ -283,13 +283,13 @@ int main(int argc, char **argv)
   startMemoryDebugger();
 
   TestDummy();
-  //TestTree<NodeTaskOpt>();
-  //TestTree<NodeTask>();
+  TestTree<NodeTaskOpt>();
+  TestTree<NodeTask>();
   TestTree<CascadeNodeTaskOpt>();
-  //TestTree<CascadeNodeTask>();
-  //TestTaskSet();
-  //TestAllocator();
-  //TestFullQueue();
+  TestTree<CascadeNodeTask>();
+  TestTaskSet();
+  TestAllocator();
+  TestFullQueue();
 
   dumpAlloc();
   endMemoryDebugger();
