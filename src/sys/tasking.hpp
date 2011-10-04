@@ -33,7 +33,7 @@
  *
  * We also classicaly implement a TaskSet which is a function which can be run
  * n times (concurrently on any number of threads). TaskSet are a particularly
- * way to logically create n tasks in one chunk.
+ * efficient way to logically create n tasks in one chunk.
  *
  * Last feature we added is the ability to run *some* task (ie the user cannot
  * decide what it will run) from a running task (ie from the run function of the
