@@ -17,7 +17,7 @@
  *     specific hardware thread (typically useful when something depends on a
  *     context like an OpenGL context)
  *
- * The core of this tasking system is a "Task". A task represent a function to
+ * The core of this tasking system is a "Task". A task represents a function to
  * call (to run) later. Each task can specify dependencies in two ways:
  * 1 - "Start dependencies" specified (see below) by Task::starts. Basically, to
  *     be able to start, a task must have all its start dependencies *ended*
@@ -86,6 +86,23 @@
  *     since the four queues (from low to critical) are multiplexed
  * 3 - If no task was found in 2, we try to steal a task from a random other
  *     queue. Here also, we take the one with the highest priority
+ *
+ * Therefore, the priorities are in that order:
+ * (">" means "has a higher priority than")
+ *
+ * User-Returned Task [regardless the priority] >
+ * Affinity-Queue::critical Task                >
+ * Affinity-Queue::high Task                    >
+ * Affinity-Queue::normal Task                  >
+ * Affinity-Queue::low Task                     >
+ * Self-Work-Stealing-Queue::critical Task      >
+ * Self-Work-Stealing-Queue::high Task          >
+ * Self-Work-Stealing-Queue::normal Task        >
+ * Victim-Work-Stealing-Queue::low Task         >
+ * Victim-Work-Stealing-Queue::critical Task    >
+ * Victim-Work-Stealing-Queue::high Task        >
+ * Victim-Work-Stealing-Queue::normal Task      >
+ * Victim-Work-Stealing-Queue::low Task         >
  *
  * As a final note, this tasking system is basically a mix of ideas from TBB (of
  * course :-) ), various tasking systems I used on Ps3 and also various tasking
