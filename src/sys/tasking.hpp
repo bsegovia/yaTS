@@ -9,19 +9,42 @@
 namespace pf {
 
   /*! A task with a higher priority will be preferred to a task with a lower
-   * priority. Note that the system does not completely comply with priorities.
-   * Basically, because the system is distributed, it is possible that one
-   * particular worker thread processes a low priority task while another thread
-   * actually has higher priority tasks currently available
+   *  priority. Note that the system does not completely comply with
+   *  priorities. Basically, because the system is distributed, it is possible
+   *  that one particular worker thread processes a low priority task while
+   *  another thread actually has higher priority tasks currently available
    */
-  enum TaskPriority {
-    CRITICAL_PRIORITY = 0u,
-    HIGH_PRIORITY     = 1u,
-    NORMAL_PRIORITY   = 2u,
-    LOW_PRIORITY      = 3u,
-    NUM_PRIORITY      = 4u,
-    INVALID_PRIORITY  = 0xffffu
+  struct TaskPriority {
+    enum {
+      CRITICAL = 0u,
+      HIGH     = 1u,
+      NORMAL   = 2u,
+      LOW      = 3u,
+      NUM      = 4u,
+      INVALID  = 0xffffu
+    };
   };
+
+  /*! Describe the current state of a task. This is only used in DEBUG mode to
+   *  assert the correctness of the operations (like Task::starts or Task::ends
+   *  which only operates on tasks with specific states). To be honest, this is a
+   *  bit bullshit code. I think using different proxy types for tasks based on
+   *  their state is the way to go. This would enforce correctness of the code
+   *  through the typing system which is just better since static. Anyway.
+   */
+#ifndef NDEBUG
+  struct TaskState {
+    enum {
+      NEW       = 0u,
+      SCHEDULED = 1u,
+      READY     = 2u,
+      RUNNING   = 3u,
+      DONE      = 4u,
+      NUM       = 5u,
+      INVALID   = 0xffffu
+    };
+  };
+#endif /* NDEBUG */
 
   /*! Interface for all tasks handled by the tasking system */
   class Task : public RefCount
@@ -31,7 +54,11 @@ namespace pf {
     INLINE Task(const char *taskName = NULL) :
       name(taskName),
       toStart(1), toEnd(1),
-      priority(NORMAL_PRIORITY), affinity(0xffff) {}
+      priority(uint16(TaskPriority::NORMAL)), affinity(0xffffu)
+#ifndef NDEBUG
+      , state(uint16(TaskState::NEW))
+#endif
+    {}
     /*! To override while specifying a task */
     virtual void run(void) = 0;
     /*! Now the task is built and is allowed to be scheduled */
@@ -39,6 +66,7 @@ namespace pf {
     /*! The given task cannot *start* as long as this task is not done */
     INLINE void starts(Task *other) {
       if (UNLIKELY(other == NULL)) return;
+      assert(other->state == TaskState::NEW);
       if (UNLIKELY(this->toBeStarted)) return; // already a task to start
       other->toStart++;
       this->toBeStarted = other;
@@ -46,15 +74,23 @@ namespace pf {
     /*! The given task cannot *end* as long as this task is not done */
     INLINE void ends(Task *other) {
       if (UNLIKELY(other == NULL)) return;
+      assert(other->state == TaskState::NEW ||
+             other->state == TaskState::RUNNING);
       if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
       other->toEnd++;
       this->toBeEnded = other;
     }
     /*! Set / get task priority and affinity */
-    INLINE void setPriority(TaskPriority prio)  { this->priority = prio; }
-    INLINE void setAffinity(int32 affi)         { this->affinity = affi; }
-    INLINE TaskPriority getPriority(void) const { return this->priority; }
-    INLINE uint16 getAffinity(void)       const { return this->affinity; }
+    INLINE void setPriority(uint16 prio) {
+      assert(this->state == TaskState::NEW);
+      this->priority = prio;
+    }
+    INLINE void setAffinity(uint16 affi) {
+      assert(this->state == TaskState::NEW);
+      this->affinity = affi;
+    }
+    INLINE uint16 getPriority(void) const { return this->priority; }
+    INLINE uint16 getAffinity(void) const { return this->affinity; }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
     /*! Tasks use a scalable fixed size allocator */
@@ -71,8 +107,9 @@ namespace pf {
     const char *name;           //!< Debug facility mostly
     Atomic32 toStart;           //!< MBZ before starting
     Atomic32 toEnd;             //!< MBZ before ending
-    TaskPriority priority;      //!< Task priority
-    int16 affinity;             //!< The task will run on a particular thread
+    uint16 priority;            //!< Task priority
+    uint16 affinity;            //!< The task will run on a particular thread
+    IF_DEBUG(uint16 state);     //!< Will assert correctness of the operations
   };
 
   /*! Allow the run function to be executed several times */

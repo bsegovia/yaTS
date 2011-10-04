@@ -15,9 +15,9 @@
  */
 #define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
-#define IF_TASK_STATISTICS(EXPR) do { EXPR; } while (0)
+#define IF_TASK_STATISTICS(EXPR) EXPR
 #else
-#define IF_TASK_STATISTICS(EXPR) do { } while(0)
+#define IF_TASK_STATISTICS(EXPR)
 #endif
 
 namespace pf {
@@ -43,7 +43,7 @@ namespace pf {
   {
   public:
     INLINE TaskQueue(void) {
-      for (size_t i = 0; i < NUM_PRIORITY; ++i) head[i] = tail[i] = 0;
+      for (size_t i = 0; i < TaskPriority::NUM; ++i) head[i] = tail[i] = 0;
     }
 
   protected:
@@ -58,11 +58,11 @@ namespace pf {
       return _mm_movemask_ps(_mm_castsi128_ps(len));
     }
 
-    Task * tasks[NUM_PRIORITY][elemNum]; //!< All tasks currently stored
-    MutexActive mutex;                   //!< Not lock-free right now
+    Task * tasks[TaskPriority::NUM][elemNum]; //!< All tasks currently stored
+    MutexActive mutex;                        //!< Not lock-free right now
     union {
       INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
-      volatile int32 x[NUM_PRIORITY];
+      volatile int32 x[TaskPriority::NUM];
       volatile __m128i v;
     } head, tail;
   };
@@ -285,7 +285,7 @@ namespace pf {
   // - Stores are not reordered with older loads
   template<int elemNum>
   bool TaskWorkStealingQueue<elemNum>::insert(Task &task) {
-    const TaskPriority prio = task.getPriority();
+    const uint16 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     this->tasks[prio][this->head[prio] % elemNum] = &task;
@@ -300,7 +300,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
-    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const uint16 prio = __bsf(mask);
     const int32 index = --this->head[prio];
     Task* task = this->tasks[prio][index % elemNum];
     IF_TASK_STATISTICS(statGetNum++);
@@ -313,7 +313,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
-    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const uint16 prio = __bsf(mask);
     const int32 index = this->tail[prio];
     Task* stolen = this->tasks[prio][index % elemNum];
     this->tail[prio]++;
@@ -323,7 +323,7 @@ namespace pf {
 
   template<int elemNum>
   bool TaskAffinityQueue<elemNum>::insert(Task &task) {
-    const TaskPriority prio = task.getPriority();
+    const uint16 prio = task.getPriority();
     // No double check here (I mean, before and after the lock. We just take the
     // optimistic approach ie we suppose the queue is never full)
     Lock<MutexActive> lock(this->mutex);
@@ -340,7 +340,7 @@ namespace pf {
     if (this->getActiveMask() == 0) return NULL;
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
-    const TaskPriority prio = TaskPriority(__bsf(mask));
+    const uint16 prio = __bsf(mask);
     Task* task = this->tasks[prio][this->tail[prio] % elemNum];
     this->tail[prio]++;
     IF_TASK_STATISTICS(statGetNum++);
@@ -614,6 +614,7 @@ namespace pf {
 
   void TaskScheduler::runTask(Task *task) {
     // Execute the function
+    IF_DEBUG(task->state = TaskState::RUNNING);
     task->run();
     Task *toRelease = task;
 
@@ -623,6 +624,7 @@ namespace pf {
 
       // We are done here
       if (stillRunning == 0) {
+        IF_DEBUG(task->state = TaskState::DONE);
         // Start the tasks if they become ready
         if (task->toBeStarted) {
           task->toBeStarted->toStart--;

@@ -145,7 +145,14 @@
 #define __builtin_expect(expr,b) expr
 #endif
 
-/* debug printing macros */
+/* Debug syntactic sugar */
+#ifdef NDEBUG
+#define IF_DEBUG(EXPR)
+#else
+#define IF_DEBUG(EXPR) EXPR
+#endif /* NDEBUG */
+
+/* Debug printing macros */
 #define STRING(x) #x
 #define PING std::cout << __FILE__ << " (" << __LINE__ << "): " << __FUNCTION__ << std::endl
 #define PRINT(x) std::cout << STRING(x) << " = " << (x) << std::endl

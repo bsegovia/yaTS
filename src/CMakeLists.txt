@@ -1,4 +1,3 @@
-include (FindGLUT)
 include_directories (${GLUT_INCLUDE_PATH})
 if (PF_USE_BLOB)
   set (SRC blob.cpp)
