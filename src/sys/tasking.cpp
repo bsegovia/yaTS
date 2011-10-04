@@ -289,7 +289,7 @@ namespace pf {
     const uint16 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    IF_DEBUG(task.state = TaskState::SCHEDULED);
+    IF_DEBUG(task.state = TaskState::READY);
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -331,7 +331,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    IF_DEBUG(task.state = TaskState::SCHEDULED);
+    IF_DEBUG(task.state = TaskState::READY);
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -591,7 +591,7 @@ namespace pf {
     do {
       // Note that the task may already be running if this is a task set (task
       // sets can be run concurrently by several threads)
-      assert(task->state == TaskState::SCHEDULED ||
+      assert(task->state == TaskState::READY ||
              task->state == TaskState::RUNNING);
       IF_DEBUG(task->state = TaskState::RUNNING);
       nextToRun = task->run();
@@ -623,7 +623,7 @@ namespace pf {
       // Handle the tasks directly passed by the user
       IF_DEBUG(if (nextToRun) assert(nextToRun->state == TaskState::NEW));
       task = nextToRun;
-      IF_DEBUG(if (task) task->state = TaskState::SCHEDULED);
+      IF_DEBUG(if (task) task->state = TaskState::READY);
     } while (task);
   }
 

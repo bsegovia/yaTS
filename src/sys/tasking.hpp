@@ -36,7 +36,6 @@ namespace pf {
   struct TaskState {
     enum {
       NEW       = 0u,
-      SCHEDULED = 1u,
       READY     = 2u,
       RUNNING   = 3u,
       DONE      = 4u,
