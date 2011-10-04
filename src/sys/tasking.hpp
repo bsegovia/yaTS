@@ -58,7 +58,7 @@ namespace pf {
       , state(uint16(TaskState::NEW))
 #endif
     {
-      // The scheduler will remove this reference
+      // The scheduler will remove this reference once the task is done
       this->refInc();
     }
     /*! To override while specifying a task. This is basically the code to
@@ -147,6 +147,11 @@ namespace pf {
 
   /*! Signal *all* threads to stop (THREAD SAFE) */
   void TaskingSystemInterrupt(void);
+
+  /*! Run any task (in READY state) in the system. Can be used from a task::run
+   *  to overlap some IO for example. Return true if anything was executed
+   */
+  bool TaskingSystemRunAnyTask(void);
 
 } /* namespace pf */
 

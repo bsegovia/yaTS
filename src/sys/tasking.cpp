@@ -709,6 +709,16 @@ namespace pf {
     FATAL_IF (scheduler == NULL, "scheduler not started");
     scheduler->stopAll();
   }
+
+  bool TaskingSystemRunAnyTask(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    Task *someTask = scheduler->getTask();
+    if (someTask) {
+      scheduler->runTask(someTask);
+      return true;
+    } else
+      return false;
+  }
 }
 
 #undef PF_TASK_STATICTICS
