@@ -44,7 +44,7 @@
  *
  *                 *** SOME DETAILS ABOUT THE IMPLEMENTATION ***
  *
- * First thing is the commentaries in tasking.cpp which give some details about
+ * First thing is the comments in tasking.cpp which give some details about
  * the implementation. Roughly the implementation is done around three
  * components:
  *
