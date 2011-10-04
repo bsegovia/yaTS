@@ -59,8 +59,12 @@ namespace pf {
       , state(uint16(TaskState::NEW))
 #endif
     {}
-    /*! To override while specifying a task */
-    virtual void run(void) = 0;
+    /*! To override while specifying a task. This is basically the code to
+     * execute. The user can optionally return a task which will by-pass the
+     * scheduler and will run *immediately* after this one. This is a classical
+     * continuation passing style strategy when we have a depth first scheduling
+     */
+    virtual Task* run(void) = 0;
     /*! Task is built and will be ready when all start dependencies are over */
     void scheduled(void);
     /*! The given task cannot *start* as long as this task is not done */
@@ -123,7 +127,7 @@ namespace pf {
     virtual void run(size_t elemID) = 0;
 
   private:
-    virtual void run(void);  //!< Reimplemented for all task sets
+    virtual Task* run(void);  //!< Reimplemented for all task sets
     Atomic elemNum;          //!< Number of outstanding elements
   };
 

@@ -21,12 +21,12 @@ using namespace pf;
 ///////////////////////////////////////////////////////////////////////////////
 class NothingTask : public Task {
 public:
-  virtual void run(void) {}
+  virtual Task* run(void) { return NULL; }
 };
 
 class DoneTask : public Task {
 public:
-  virtual void run(void) { TaskingSystemInterrupt(); }
+  virtual Task* run(void) { TaskingSystemInterrupt(); return NULL; }
 };
 
 START_UTEST(TestDummy)
@@ -82,13 +82,13 @@ public:
     value(value_), lvl(lvl_) {
     this->root = root_ == NULL ? this : root_;
   }
-  virtual void run(void);
+  virtual Task* run(void);
   Atomic &value;
   Task *root;
   uint32 lvl;
 };
 
-void NodeTask::run(void) {
+Task* NodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
@@ -99,6 +99,7 @@ void NodeTask::run(void) {
     left->scheduled();
     right->scheduled();
   }
+  return NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -111,12 +112,12 @@ class CascadeNodeTask : public Task {
 public:
   INLINE CascadeNodeTask(Atomic &value_, uint32 lvl_, Task *root_=NULL) :
     value(value_), lvl(lvl_) {}
-  virtual void run(void);
+  virtual Task* run(void);
   Atomic &value;
   uint32 lvl;
 };
 
-void CascadeNodeTask::run(void) {
+Task *CascadeNodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
@@ -127,6 +128,7 @@ void CascadeNodeTask::run(void) {
     left->scheduled();
     right->scheduled();
   }
+  return NULL;
 }
 
 /*! For both tree tests */
@@ -188,7 +190,7 @@ public:
   FullTask(const char *name, Atomic &counter, int lvl = 0) :
     Task(name), counter(counter), lvl(lvl) {}
   ~FullTask(void) { lvl = 0xdead; }
-  virtual void run(void) {
+  virtual Task* run(void) {
     if (lvl == 0)
       for (size_t i = 0; i < taskToSpawn; ++i) {
         Task *task = NEW(FullTask, "FullTaskLvl1", counter, 1);
@@ -197,6 +199,7 @@ public:
       }
     else
       counter++;
+    return NULL;
   }
   Atomic &counter;
   int lvl;

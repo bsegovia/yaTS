@@ -633,7 +633,7 @@ namespace pf {
   void Task::operator delete(void *ptr) { allocator->deallocate(ptr); }
 #endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
-  void TaskSet::run(void)
+  Task* TaskSet::run(void)
   {
     // The basic idea with task sets is to reschedule the task in its own
     // queue to have it stolen by another thread. Once done, we simply execute
@@ -664,6 +664,7 @@ namespace pf {
       while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (--this->elemNum == 0)
       this->run(0);
+    return NULL;
   }
 
   void TaskingSystemStart(void) {
