@@ -58,7 +58,10 @@ namespace pf {
 #ifndef NDEBUG
       , state(uint16(TaskState::NEW))
 #endif
-    {}
+    {
+      // The scheduler will remove this reference
+      this->refInc();
+    }
     /*! To override while specifying a task. This is basically the code to
      * execute. The user can optionally return a task which will by-pass the
      * scheduler and will run *immediately* after this one. This is a classical
@@ -67,7 +70,7 @@ namespace pf {
     virtual Task* run(void) = 0;
     /*! Task is built and will be ready when all start dependencies are over */
     void scheduled(void);
-    /*! The given task cannot *start* as long as this task is not done */
+    /*! The given task cannot *start* as long as "other" is not complete */
     INLINE void starts(Task *other) {
       if (UNLIKELY(other == NULL)) return;
       assert(other->state == TaskState::NEW);
@@ -75,7 +78,7 @@ namespace pf {
       other->toStart++;
       this->toBeStarted = other;
     }
-    /*! The given task cannot *end* as long as this task is not done */
+    /*! The given task cannot *end* as long as "other" is not complete */
     INLINE void ends(Task *other) {
       if (UNLIKELY(other == NULL)) return;
       assert(other->state == TaskState::NEW ||
@@ -104,16 +107,16 @@ namespace pf {
 #endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
   private:
-    friend class TaskSet;       //!< Will tweak the ending criterium
-    friend class TaskScheduler; //!< Needs to access everything
-    Ref<Task> toBeEnded;        //!< Signals it when finishing
-    Ref<Task> toBeStarted;      //!< Triggers it when ready
-    const char *name;           //!< Debug facility mostly
-    Atomic32 toStart;           //!< MBZ before starting
-    Atomic32 toEnd;             //!< MBZ before ending
-    uint16 priority;            //!< Task priority
-    uint16 affinity;            //!< The task will run on a particular thread
-    IF_DEBUG(uint16 state);     //!< Will assert correctness of the operations
+    friend class TaskSet;        //!< Will tweak the ending criterium
+    friend class TaskScheduler;  //!< Needs to access everything
+    Ref<Task> toBeEnded;         //!< Signals it when finishing
+    Ref<Task> toBeStarted;       //!< Triggers it when ready
+    const char *name;            //!< Debug facility mostly
+    Atomic32 toStart;            //!< MBZ before starting
+    Atomic32 toEnd;              //!< MBZ before ending
+    uint16 priority;             //!< Task priority
+    uint16 affinity;             //!< The task will run on a particular thread
+  public: IF_DEBUG(uint16 state);//!< Will assert correctness of the operations
   };
 
   /*! Allow the run function to be executed several times */

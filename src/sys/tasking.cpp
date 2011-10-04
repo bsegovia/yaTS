@@ -11,7 +11,7 @@
  * counted but we do not use Ref<Task> here. This is for performance reasons.
  * We therefore *manually* handle the extra references the scheduler may have
  * on a task. This is nasty but maintains a reasonnable speed in the system.
- * Using Ref<Task> in the queue makes the system roughly twice slower
+ * Using Ref<Task> in the queues makes the system roughly twice slower
  */
 #define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
@@ -170,8 +170,8 @@ namespace pf {
     friend class Task;            //!< Tasks ...
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
-    //enum { queueSize = 512 };     //!< Number of task per queue
-    enum { queueSize = 1 };     //!< Number of task per queue
+    enum { queueSize = 512 };     //!< Number of task per queue
+    //enum { queueSize = 1 };     //!< Number of task per queue
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
     TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
@@ -289,6 +289,7 @@ namespace pf {
     const uint16 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
+    IF_DEBUG(task.state = TaskState::SCHEDULED);
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -330,6 +331,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
+    IF_DEBUG(task.state = TaskState::SCHEDULED);
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -505,7 +507,7 @@ namespace pf {
   template void TaskScheduler::threadFunction<true>(TaskScheduler::Thread*);
 
   TaskScheduler::TaskScheduler(int threadNum_) :
-    wsQueues(NULL), afQueues(NULL), threads(NULL), dead(false)
+    wsQueues(NULL), afQueues(NULL), threads(NULL), dead(false), deadMain(false)
   {
     if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 2;
     this->threadNum = threadNum_;
@@ -544,7 +546,6 @@ namespace pf {
   void TaskScheduler::schedule(Task &task) {
     // We pick up any tasks to make some free space for the task we are
     // scheduling
-    task.refInc();
     while (UNLIKELY(!this->trySchedule(task))) {
       Task *someTask = this->getTask();
       if (someTask) this->runTask(someTask);
@@ -586,32 +587,44 @@ namespace pf {
 
   void TaskScheduler::runTask(Task *task) {
     // Execute the function
-    IF_DEBUG(task->state = TaskState::RUNNING);
-    task->run();
-    Task *toRelease = task;
-
-    // Explore the completions and runs all continuations if any
+    Task *nextToRun = NULL;
     do {
-      const atomic_t stillRunning = --task->toEnd;
+      // Note that the task may already be running if this is a task set (task
+      // sets can be run concurrently by several threads)
+      assert(task->state == TaskState::SCHEDULED ||
+             task->state == TaskState::RUNNING);
+      IF_DEBUG(task->state = TaskState::RUNNING);
+      nextToRun = task->run();
+      Task *toRelease = task;
 
-      // We are done here
-      if (stillRunning == 0) {
-        IF_DEBUG(task->state = TaskState::DONE);
-        // Start the tasks if they become ready
-        if (task->toBeStarted) {
-          task->toBeStarted->toStart--;
-          if (task->toBeStarted->toStart == 0)
-            this->schedule(*task->toBeStarted);
+      // Explore the completions and runs all continuations if any
+      do {
+        const atomic_t stillRunning = --task->toEnd;
+
+        // We are done here
+        if (stillRunning == 0) {
+          IF_DEBUG(task->state = TaskState::DONE);
+          // Start the tasks if they become ready
+          if (task->toBeStarted) {
+            task->toBeStarted->toStart--;
+            if (task->toBeStarted->toStart == 0)
+              this->schedule(*task->toBeStarted);
+          }
+          // Traverse all completions to signal we are done
+          task = task->toBeEnded.ptr;
         }
-        // Traverse all completions to signal we are done
-        task = task->toBeEnded.ptr;
-      }
-      else
-        task = NULL;
-    } while (task);
+        else
+          task = NULL;
+      } while (task);
 
-    // run function is counterpart of schedule. We remove one ref
-    if (toRelease->refDec()) DELETE(toRelease);
+      // Now the run function is done, we can remove the scheduler reference
+      if (toRelease->refDec()) DELETE(toRelease);
+
+      // Handle the tasks directly passed by the user
+      IF_DEBUG(if (nextToRun) assert(nextToRun->state == TaskState::NEW));
+      task = nextToRun;
+      IF_DEBUG(if (task) task->state = TaskState::SCHEDULED);
+    } while (task);
   }
 
   template<bool isMainThread>
@@ -647,6 +660,7 @@ namespace pf {
     atomic_t curr;
     if (this->elemNum > 2) {
       this->toEnd += 2;
+      this->refInc(); // One more reference in the scheduler
       scheduler->schedule(*this);
       // This is a bit tricky here. Basically, in the case the queue is full, we
       // don't want to recurse and pick up the task set we just scheduled
@@ -660,6 +674,7 @@ namespace pf {
       while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (this->elemNum > 1) {
       this->toEnd++;
+      this->refInc(); // One more reference in the scheduler
       scheduler->schedule(*this);
       while ((curr = --this->elemNum) >= 0) this->run(curr);
     } else if (--this->elemNum == 0)

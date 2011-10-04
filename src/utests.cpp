@@ -103,8 +103,40 @@ Task* NodeTask::run(void) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Same binary test as above but here each task completes its parent task
-// directly. This stresses the completion system
+// Same as NodeTask but we use a continuation passing style strategy to improve
+// the system throughtput
+///////////////////////////////////////////////////////////////////////////////
+
+/*! One node task per node in the tree. Task completes the root */
+class NodeTaskOpt : public Task {
+public:
+  INLINE NodeTaskOpt(Atomic &value_, uint32 lvl_, Task *root_=NULL) :
+    value(value_), lvl(lvl_) {
+    this->root = root_ == NULL ? this : root_;
+  }
+  virtual Task* run(void);
+  Atomic &value;
+  Task *root;
+  uint32 lvl;
+};
+
+Task* NodeTaskOpt::run(void) {
+  if (this->lvl == maxLevel) {
+    this->value++;
+    return NULL;
+  } else {
+    Task *left  = NEW(NodeTask, this->value, this->lvl+1, this->root);
+    Task *right = NEW(NodeTask, this->value, this->lvl+1, this->root);
+    left->ends(this->root);
+    right->ends(this->root);
+    left->scheduled();
+    return right;
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Same as NodeTask but here each task completes its parent task directly. This
+// stresses the completion system but strongly limits cache line contention
 ///////////////////////////////////////////////////////////////////////////////
 
 /*! One node task per node in the tree. Task completes its parent */
@@ -131,7 +163,33 @@ Task *CascadeNodeTask::run(void) {
   return NULL;
 }
 
-/*! For both tree tests */
+///////////////////////////////////////////////////////////////////////////////
+// Same as CascadeNodeTask but with continuation passing style tasks
+///////////////////////////////////////////////////////////////////////////////
+class CascadeNodeTaskOpt : public Task {
+public:
+  INLINE CascadeNodeTaskOpt(Atomic &value_, uint32 lvl_, Task *root_=NULL) :
+    value(value_), lvl(lvl_) {}
+  virtual Task* run(void);
+  Atomic &value;
+  uint32 lvl;
+};
+
+Task *CascadeNodeTaskOpt::run(void) {
+  if (this->lvl == maxLevel) {
+    this->value++;
+    return NULL;
+  } else {
+    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    left->ends(this);
+    right->ends(this);
+    left->scheduled();
+    return right;
+  }
+}
+
+/*! For all tree tests */
 template<typename NodeType>
 START_UTEST(TestTree)
   TaskingSystemStart();
@@ -225,11 +283,13 @@ int main(int argc, char **argv)
   startMemoryDebugger();
 
   TestDummy();
-  TestTree<NodeTask>();
-  TestTree<CascadeNodeTask>();
-  TestTaskSet();
-  TestAllocator();
-  TestFullQueue();
+  //TestTree<NodeTaskOpt>();
+  //TestTree<NodeTask>();
+  TestTree<CascadeNodeTaskOpt>();
+  //TestTree<CascadeNodeTask>();
+  //TestTaskSet();
+  //TestAllocator();
+  //TestFullQueue();
 
   dumpAlloc();
   endMemoryDebugger();
