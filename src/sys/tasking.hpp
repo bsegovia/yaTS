@@ -23,6 +23,9 @@
  *     be able to start, a task must have all its start dependencies *ended*
  * 2 - "End dependencies" specified (see below) by Task::ends. In that case, tgo
  *     be able to finish, a task must have all its end dependencies *ended*
+ * So, task1->starts(task2) means that task2 cannot start before task1 is ended
+ * Also, task3->ends(task4) means that task4 cannot end before task3 is ended
+ * Note that each task can only start one task and can only end one task
  *
  * Specifying dependencies in that way allows the user to *dynamically* (ie
  * during the task execution) create a direct acyclic graph of tasks (DAG). One
