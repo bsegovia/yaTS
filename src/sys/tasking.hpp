@@ -145,10 +145,11 @@ namespace pf {
   struct TaskState {
     enum {
       NEW       = 0u,
-      READY     = 1u,
-      RUNNING   = 2u,
-      DONE      = 3u,
-      NUM       = 4u,
+      SCHEDULED = 1u,
+      READY     = 2u,
+      RUNNING   = 3u,
+      DONE      = 4u,
+      NUM       = 5u,
       INVALID   = 0xffffu
     };
   };
@@ -190,6 +191,7 @@ namespace pf {
     INLINE void ends(Task *other) {
       if (UNLIKELY(other == NULL)) return;
       assert(other->state == TaskState::NEW ||
+             other->state == TaskState::SCHEDULED ||
              other->state == TaskState::RUNNING);
       if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
       other->toEnd++;
@@ -256,6 +258,12 @@ namespace pf {
 
   /*! Signal *all* threads to stop (THREAD SAFE) */
   void TaskingSystemInterrupt(void);
+
+  /*! Number of threads currently in the tasking system (*including main*) */
+  uint32 TaskingSystemGetThreadNum(void);
+
+  /*! Return the ID of the calling thread (between 0 and threadNum) */
+  uint32 TaskingSystemGetThreadID(void);
 
   /*! Run any task (in READY state) in the system. Can be used from a task::run
    *  to overlap some IO for example. Return true if anything was executed

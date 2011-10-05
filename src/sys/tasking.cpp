@@ -58,7 +58,7 @@ namespace pf {
       const __m128i h = _mm_castps_si128(_mm_load_ps((float*) head.x));
       const __m128i len = _mm_sub_epi32(t, h);
 #else
-	  const __m128i len = _mm_sub_epi32(tail.v, head.v);
+      const __m128i len = _mm_sub_epi32(tail.v, head.v);
 #endif /* _MSC_VER */
       return _mm_movemask_ps(_mm_castsi128_ps(len));
     }
@@ -149,6 +149,8 @@ namespace pf {
     INLINE void stopMain(void) { deadMain = true; }
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getThreadNum(void) { return uint32(this->threadNum); }
+    /*! ID of the calling thread in the tasking system */
+    INLINE uint32 getThreadID(void) { return uint32(this->threadID); }
     /*! Try to get a task from all the current queues */
     INLINE Task* getTask(void);
     /*! Run the task and recursively handle the tasks to start and to end */
@@ -643,6 +645,7 @@ namespace pf {
   static TaskAllocator *allocator = NULL;
 
   void Task::scheduled(void) {
+    IF_DEBUG(this->state = TaskState::SCHEDULED);
     this->toStart--;
     if (this->toStart == 0) scheduler->schedule(*this);
   }
@@ -714,6 +717,16 @@ namespace pf {
   void TaskingSystemInterrupt(void) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
     scheduler->stopAll();
+  }
+
+  uint32 TaskingSystemGetThreadNum(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    return scheduler->getThreadNum();
+  }
+
+  uint32 TaskingSystemGetThreadID(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    return scheduler->getThreadID();
   }
 
   bool TaskingSystemRunAnyTask(void) {

@@ -247,7 +247,6 @@ public:
   enum { taskToSpawn = 1u << 16u };
   FullTask(const char *name, Atomic &counter, int lvl = 0) :
     Task(name), counter(counter), lvl(lvl) {}
-  ~FullTask(void) { lvl = 0xdead; }
   virtual Task* run(void) {
     if (lvl == 0)
       for (size_t i = 0; i < taskToSpawn; ++i) {
@@ -278,6 +277,49 @@ START_UTEST(TestFullQueue)
   FATAL_IF (counter != 64 * FullTask::taskToSpawn, "TestFullQueue failed");
 END_UTEST(TestFullQueue)
 
+///////////////////////////////////////////////////////////////////////////////
+// We spawn a lot of affinity jobs to saturate the affinity queues
+///////////////////////////////////////////////////////////////////////////////
+class AffinityTask : public Task {
+public:
+  enum { taskToSpawn = 2048u };
+  AffinityTask(Task *done, Atomic &counter, int lvl = 0) :
+    Task("AffinityTask"), counter(counter), lvl(lvl) {}
+  virtual Task *run(void) {
+    if (lvl == 1) {
+      counter++;
+    }
+    else {
+      const uint32 threadNum = TaskingSystemGetThreadNum();
+      for (uint32 i = 0; i < taskToSpawn; ++i) {
+        Task *task = PF_NEW(AffinityTask, done.ptr, counter, 1);
+        task->setAffinity(i % threadNum);
+        task->ends(done.ptr);
+        task->scheduled();
+      }
+    }
+    return NULL;
+  }
+  Atomic &counter;
+  Ref<Task> done;
+  int lvl;
+};
+
+START_UTEST(TestAffinity)
+  Atomic counter(0u);
+  TaskingSystemStart();
+  Task *done = PF_NEW(DoneTask);
+  for (size_t i = 0; i < 64; ++i) {
+    Task *task = PF_NEW(AffinityTask, done, counter, 0);
+    task->starts(done);
+    task->scheduled();
+  }
+  done->scheduled();
+  TaskingSystemEnter();
+  TaskingSystemEnd();
+  FATAL_IF (counter != 64 * AffinityTask::taskToSpawn, "TestFullQueue failed");
+END_UTEST(TestAffinity)
+
 int main(int argc, char **argv)
 {
   startMemoryDebugger();
@@ -290,7 +332,7 @@ int main(int argc, char **argv)
   TestTaskSet();
   TestAllocator();
   TestFullQueue();
-
+  TestAffinity();
   dumpAlloc();
   endMemoryDebugger();
   return 0;
