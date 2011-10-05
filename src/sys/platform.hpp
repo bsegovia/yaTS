@@ -121,8 +121,6 @@
 #define ALIGNED(...)         __declspec(align(__VA_ARGS__))
 //#define __FUNCTION__           __FUNCTION__
 #define debugbreak()         __debugbreak()
-#define WINDOWS_DELETE DELETE
-#undef DELETE  // We use it on our side
 #else
 #undef NOINLINE
 #undef INLINE
@@ -168,10 +166,10 @@
 
 /* Fatal error macros */
 #if defined(__WIN32__)
+namespace pf { void fatalBox(const char*); }
 #define FATAL(...)                                           \
 do {                                                         \
   char msg[1024];                                            \
-  namespace pf {void fatalBox(const char*, const char*);}    \
   _snprintf_s(msg, sizeof(msg), _countof(msg), __VA_ARGS__); \
   pf::fatalBox(msg);                                         \
   fprintf(stderr, "error: ");                                \
@@ -196,8 +194,8 @@ do {                                                         \
 } while (0)
 
 /* Safe deletion macros */
-#define SAFE_DELETE_ARRAY(x) do { if (x != NULL) DELETE_ARRAY(x); } while (0)
-#define SAFE_DELETE(x) do { if (x != NULL) DELETE(x); } while (0)
+#define PF_SAFE_DELETE_ARRAY(x) do { if (x != NULL) PF_DELETE_ARRAY(x); } while (0)
+#define PF_SAFE_DELETE(x) do { if (x != NULL) PF_DELETE(x); } while (0)
 
 /* Various helper macros */
 #define ARRAY_ELEM_NUM(x) (sizeof(x) / sizeof(x[0]))

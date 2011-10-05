@@ -7,12 +7,11 @@
 #include <vector>
 #include <cstdlib>
 
-/* One important remark about reference counting. Tasks are referenced
- * counted but we do not use Ref<Task> here. This is for performance reasons.
- * We therefore *manually* handle the extra references the scheduler may have
- * on a task. This is nasty but maintains a reasonnable speed in the system.
- * Using Ref<Task> in the queues makes the system roughly twice slower
- */
+// One important remark about reference counting. Tasks are referenced
+// counted but we do not use Ref<Task> here. This is for performance reasons.
+// We therefore *manually* handle the extra references the scheduler may have
+// on a task. This is nasty but maintains a reasonnable speed in the system.
+// Using Ref<Task> in the queues makes the system roughly twice slower
 #define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) EXPR
@@ -43,7 +42,7 @@ namespace pf {
   {
   public:
     INLINE TaskQueue(void) {
-      for (size_t i = 0; i < TaskPriority::NUM; ++i) head[i] = tail[i] = 0;
+      for (uint32 i = 0; i < TaskPriority::NUM; ++i) head[i] = tail[i] = 0;
     }
 
   protected:
@@ -54,7 +53,13 @@ namespace pf {
      *  will return the first non-empty queue with the highest priority
      */
     INLINE int getActiveMask(void) const {
-      const __m128i len = _mm_sub_epi32(tail.v, head.v);
+#if defined(_MSC_VER)
+      const __m128i t = _mm_castps_si128(_mm_load_ps((float*) tail.x));
+      const __m128i h = _mm_castps_si128(_mm_load_ps((float*) head.x));
+      const __m128i len = _mm_sub_epi32(t, h);
+#else
+	  const __m128i len = _mm_sub_epi32(tail.v, head.v);
+#endif /* _MSC_VER */
       return _mm_movemask_ps(_mm_castsi128_ps(len));
     }
 
@@ -65,6 +70,7 @@ namespace pf {
       volatile int32 x[TaskPriority::NUM];
       volatile __m128i v;
     } head, tail;
+	ALIGNED_CLASS;
   };
 
   /*! For work stealing:
@@ -142,7 +148,7 @@ namespace pf {
     /*! Interrupt main thread only */
     INLINE void stopMain(void) { deadMain = true; }
     /*! Number of threads running in the scheduler (not including main) */
-    INLINE uint32 getThreadNum(void) { return this->threadNum; }
+    INLINE uint32 getThreadNum(void) { return uint32(this->threadNum); }
     /*! Try to get a task from all the current queues */
     INLINE Task* getTask(void);
     /*! Run the task and recursively handle the tasks to start and to end */
@@ -200,7 +206,7 @@ namespace pf {
       }
     }
     ~TaskStorage(void) {
-      for (size_t i = 0; i < toFree.size(); ++i) ALIGNED_FREE(toFree[i]);
+      for (size_t i = 0; i < toFree.size(); ++i) PF_ALIGNED_FREE(toFree[i]);
     }
 
     /*! Will try to allocate from the local storage. Use std::malloc to
@@ -237,7 +243,7 @@ namespace pf {
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
     TaskAllocator *allocator;    //!< Handles global heap
     void *chunk[maxHeap];        //!< One heap per size
-    uint32_t currSize[maxHeap];  //!< Sum of the free task sizes
+    uint32 currSize[maxHeap];    //!< Sum of the free task sizes
     std::vector<void*> toFree;   //!< All chunks allocated (per thread)
     ALIGNED_CLASS
   };
@@ -351,7 +357,7 @@ namespace pf {
   }
 
   TaskAllocator::TaskAllocator(uint32 threadNum_) : threadNum(threadNum_) {
-    this->local = NEW_ARRAY(TaskStorage, threadNum);
+    this->local = PF_NEW_ARRAY(TaskStorage, threadNum);
     for (size_t i = 0; i < threadNum; ++i) this->local[i].allocator = this;
     for (size_t i = 0; i < maxHeap; ++i) this->global[i] = NULL;
   }
@@ -360,7 +366,7 @@ namespace pf {
 #if PF_TASK_STATICTICS
     for (size_t i = 0; i < threadNum; ++i) this->local[i].printStats();
 #endif /* PF_TASK_STATICTICS */
-    DELETE_ARRAY(this->local);
+    PF_DELETE_ARRAY(this->local);
   }
 
   void *TaskAllocator::allocate(size_t sz) {
@@ -369,7 +375,7 @@ namespace pf {
     // [pointer_to_next_node,pointer_to_next_chunk,sizeof(chunk)]
     // We therefore need three times the size of a pointer for the nodes
     // and therefore for the task
-    sz = std::max(3 * sizeof(void*), sz);
+    if (sz < 3 * sizeof(void*)) sz = 3 * sizeof(void*);
     return this->local[TaskScheduler::threadID].allocate(sz);
   }
 
@@ -381,7 +387,7 @@ namespace pf {
     IF_TASK_STATISTICS(statNewChunkNum++);
     // We store the size of the elements in the chunk header
     const uint32 elemSize = 1 << chunkID;
-    char *chunk = (char *) ALIGNED_MALLOC(2*chunkSize, chunkSize);
+    char *chunk = (char *) PF_ALIGNED_MALLOC(2*chunkSize, chunkSize);
 
     // We store this pointer to free it later while deleting the task
     // allocator
@@ -445,7 +451,7 @@ namespace pf {
 
     // This is our new chunk
     this->chunk[chunkID] = list;
-    this->currSize[chunkID] = ((uintptr_t *) list)[2];
+    this->currSize[chunkID] = uint32(((uintptr_t *) list)[2]);
     IF_TASK_STATISTICS(statPopGlobalNum++);
   }
 
@@ -484,7 +490,7 @@ namespace pf {
   template <bool isMainThread>
   void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
   {
-    threadID = thread->tid;
+    threadID = uint32(thread->tid);
     TaskScheduler *This = &thread->scheduler;
 
     // We try to pick up a task from our queue and then we try to steal a task
@@ -499,7 +505,7 @@ namespace pf {
         goto end;
     }
   end:
-    DELETE(thread);
+    PF_DELETE(thread);
   }
 
   // Explicitely instantiate both versions of the function
@@ -509,24 +515,24 @@ namespace pf {
   TaskScheduler::TaskScheduler(int threadNum_) :
     wsQueues(NULL), afQueues(NULL), threads(NULL), dead(false), deadMain(false)
   {
-    if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 2;
+    if (threadNum_ < 0) threadNum_ = getNumberOfLogicalThreads() - 1;
     this->threadNum = threadNum_;
 
     // We have a work queue for the main thread too
     this->queueNum = threadNum+1;
-    this->wsQueues = NEW_ARRAY(TaskWorkStealingQueue<queueSize>, queueNum);
-    this->afQueues = NEW_ARRAY(TaskAffinityQueue<queueSize>, queueNum);
+    this->wsQueues = PF_NEW_ARRAY(TaskWorkStealingQueue<queueSize>, queueNum);
+    this->afQueues = PF_NEW_ARRAY(TaskAffinityQueue<queueSize>, queueNum);
 
     // Also one random generator for *every* thread
-    this->random = NEW_ARRAY(FastRand, queueNum);
+    this->random = PF_NEW_ARRAY(FastRand, queueNum);
 
     // Only if we have dedicated worker threads
     if (threadNum > 0) {
-      this->threads = NEW_ARRAY(thread_t, threadNum);
+      this->threads = PF_NEW_ARRAY(thread_t, threadNum);
       const size_t stackSize = 4*MB;
       for (size_t i = 0; i < threadNum; ++i) {
         const int affinity = int(i+1);
-        Thread *thread = NEW(Thread,i+1,*this);
+        Thread *thread = PF_NEW(Thread,i+1,*this);
         thread_func threadFunc = (thread_func) threadFunction<false>;
         threads[i] = createThread(threadFunc, thread, stackSize, affinity);
       }
@@ -556,16 +562,16 @@ namespace pf {
     if (threads)
       for (size_t i = 0; i < threadNum; ++i)
         join(threads[i]);
-    SAFE_DELETE_ARRAY(threads);
+    PF_SAFE_DELETE_ARRAY(threads);
 #if PF_TASK_STATICTICS
     for (size_t i = 0; i < queueNum; ++i) {
       std::cout << "Task Queue " << i << " ";
       wsQueues[i].printStats();
     }
 #endif /* PF_TASK_STATICTICS */
-    SAFE_DELETE_ARRAY(wsQueues);
-    SAFE_DELETE_ARRAY(afQueues);
-    SAFE_DELETE_ARRAY(random);
+    PF_SAFE_DELETE_ARRAY(wsQueues);
+    PF_SAFE_DELETE_ARRAY(afQueues);
+    PF_SAFE_DELETE_ARRAY(random);
   }
 
   THREAD uint32 TaskScheduler::threadID = 0;
@@ -618,7 +624,7 @@ namespace pf {
       } while (task);
 
       // Now the run function is done, we can remove the scheduler reference
-      if (toRelease->refDec()) DELETE(toRelease);
+      if (toRelease->refDec()) PF_DELETE(toRelease);
 
       // Handle the tasks directly passed by the user
       IF_DEBUG(if (nextToRun) assert(nextToRun->state == TaskState::NEW));
@@ -629,7 +635,7 @@ namespace pf {
 
   template<bool isMainThread>
   void TaskScheduler::go(void) {
-    Thread *thread = NEW(Thread, 0, *this);
+    Thread *thread = PF_NEW(Thread, 0, *this);
     threadFunction<isMainThread>(thread);
   }
 
@@ -684,13 +690,13 @@ namespace pf {
 
   void TaskingSystemStart(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
-    scheduler = NEW(TaskScheduler);
-    allocator = NEW(TaskAllocator, scheduler->getThreadNum()+1);
+    scheduler = PF_NEW(TaskScheduler);
+    allocator = PF_NEW(TaskAllocator, scheduler->getThreadNum()+1);
   }
 
   void TaskingSystemEnd(void) {
-    SAFE_DELETE(scheduler);
-    SAFE_DELETE(allocator);
+    PF_SAFE_DELETE(scheduler);
+    PF_SAFE_DELETE(allocator);
     scheduler = NULL;
     allocator = NULL;
   }

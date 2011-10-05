@@ -6,4 +6,3 @@
 #include "sys/mutex.cpp"
 #include "sys/condition.cpp"
 #include "sys/platform.cpp"
-

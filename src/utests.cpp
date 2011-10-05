@@ -31,8 +31,8 @@ public:
 
 START_UTEST(TestDummy)
   TaskingSystemStart();
-  Task *done = NEW(DoneTask);
-  Task *nothing = NEW(NothingTask);
+  Task *done = PF_NEW(DoneTask);
+  Task *nothing = PF_NEW(NothingTask);
   nothing->starts(done);
   done->scheduled();
   nothing->scheduled();
@@ -54,10 +54,10 @@ public:
 START_UTEST(TestTaskSet)
   const size_t elemNum = 1 << 20;
   TaskingSystemStart();
-  uint32 *array = NEW_ARRAY(uint32, elemNum);
+  uint32 *array = PF_NEW_ARRAY(uint32, elemNum);
   for (size_t i = 0; i < elemNum; ++i) array[i] = 0;
-  Task *done = NEW(DoneTask);
-  Task *taskSet = NEW(SimpleTaskSet, elemNum, array);
+  Task *done = PF_NEW(DoneTask);
+  Task *taskSet = PF_NEW(SimpleTaskSet, elemNum, array);
   taskSet->starts(done);
   done->scheduled();
   taskSet->scheduled();
@@ -65,7 +65,7 @@ START_UTEST(TestTaskSet)
   TaskingSystemEnd();
   for (size_t i = 0; i < elemNum; ++i)
     FATAL_IF(array[i] == 0, "TestTaskSet failed");
-  DELETE_ARRAY(array);
+  PF_DELETE_ARRAY(array);
 END_UTEST(TestTaskSet)
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -92,8 +92,8 @@ Task* NodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
-    Task *left  = NEW(NodeTask, this->value, this->lvl+1, this->root);
-    Task *right = NEW(NodeTask, this->value, this->lvl+1, this->root);
+    Task *left  = PF_NEW(NodeTask, this->value, this->lvl+1, this->root);
+    Task *right = PF_NEW(NodeTask, this->value, this->lvl+1, this->root);
     left->ends(this->root);
     right->ends(this->root);
     left->scheduled();
@@ -125,8 +125,8 @@ Task* NodeTaskOpt::run(void) {
     this->value++;
     return NULL;
   } else {
-    Task *left  = NEW(NodeTask, this->value, this->lvl+1, this->root);
-    Task *right = NEW(NodeTask, this->value, this->lvl+1, this->root);
+    Task *left  = PF_NEW(NodeTask, this->value, this->lvl+1, this->root);
+    Task *right = PF_NEW(NodeTask, this->value, this->lvl+1, this->root);
     left->ends(this->root);
     right->ends(this->root);
     left->scheduled();
@@ -153,8 +153,8 @@ Task *CascadeNodeTask::run(void) {
   if (this->lvl == maxLevel)
     this->value++;
   else {
-    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1);
-    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *left  = PF_NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *right = PF_NEW(CascadeNodeTask, this->value, this->lvl+1);
     left->ends(this);
     right->ends(this);
     left->scheduled();
@@ -180,8 +180,8 @@ Task *CascadeNodeTaskOpt::run(void) {
     this->value++;
     return NULL;
   } else {
-    Task *left  = NEW(CascadeNodeTask, this->value, this->lvl+1);
-    Task *right = NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *left  = PF_NEW(CascadeNodeTask, this->value, this->lvl+1);
+    Task *right = PF_NEW(CascadeNodeTask, this->value, this->lvl+1);
     left->ends(this);
     right->ends(this);
     left->scheduled();
@@ -196,8 +196,8 @@ START_UTEST(TestTree)
   Atomic value(0u);
   std::cout << "nodeNum = " << (2 << maxLevel) - 1 << std::endl;
   double t = getSeconds();
-  Task *done = NEW(DoneTask);
-  Task *root = NEW(NodeType, value, 0);
+  Task *done = PF_NEW(DoneTask);
+  Task *root = PF_NEW(NodeType, value, 0);
   root->starts(done);
   done->scheduled();
   root->scheduled();
@@ -223,15 +223,15 @@ void AllocateTask::run(size_t elemID) {
   Task *tasks[allocNum];
   for (int j = 0; j < iterNum; ++j) {
     const int taskNum = rand() % allocNum;
-    for (int i = 0; i < taskNum; ++i) tasks[i] = NEW(NothingTask);
-    for (int i = 0; i < taskNum; ++i) DELETE(tasks[i]);
+    for (int i = 0; i < taskNum; ++i) tasks[i] = PF_NEW(NothingTask);
+    for (int i = 0; i < taskNum; ++i) PF_DELETE(tasks[i]);
   }
 }
 
 START_UTEST(TestAllocator)
   TaskingSystemStart();
-  Task *done = NEW(DoneTask);
-  Task *allocate = NEW(AllocateTask, 1 << 10);
+  Task *done = PF_NEW(DoneTask);
+  Task *allocate = PF_NEW(AllocateTask, 1 << 10);
   allocate->starts(done);
   done->scheduled();
   allocate->scheduled();
@@ -251,7 +251,7 @@ public:
   virtual Task* run(void) {
     if (lvl == 0)
       for (size_t i = 0; i < taskToSpawn; ++i) {
-        Task *task = NEW(FullTask, "FullTaskLvl1", counter, 1);
+        Task *task = PF_NEW(FullTask, "FullTaskLvl1", counter, 1);
         task->ends(this);
         task->scheduled();
       }
@@ -266,9 +266,9 @@ public:
 START_UTEST(TestFullQueue)
   Atomic counter(0u);
   TaskingSystemStart();
-  Task *done = NEW(DoneTask);
+  Task *done = PF_NEW(DoneTask);
   for (size_t i = 0; i < 64; ++i) {
-    Task *task = NEW(FullTask, "FullTask", counter);
+    Task *task = PF_NEW(FullTask, "FullTask", counter);
     task->starts(done);
     task->scheduled();
   }

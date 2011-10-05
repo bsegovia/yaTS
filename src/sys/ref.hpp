@@ -49,11 +49,11 @@ namespace pf
     INLINE Ref(NullTy) : ptr(NULL) {}
     INLINE Ref(const Ref& input) : ptr(input.ptr) { if ( ptr ) ptr->refInc(); }
     INLINE Ref(Type* const input) : ptr(input) { if (ptr) ptr->refInc(); }
-    INLINE ~Ref(void) { if (ptr && ptr->refDec()) DELETE(ptr); }
+    INLINE ~Ref(void) { if (ptr && ptr->refDec()) PF_DELETE(ptr); }
 
     INLINE Ref& operator= (const Ref &input) {
-      if ( input.ptr ) input.ptr->refInc();
-      if ( ptr && ptr->refDec() ) DELETE(ptr);
+      if (input.ptr) input.ptr->refInc();
+      if (ptr && ptr->refDec()) PF_DELETE(ptr);
       *(Type**)&ptr = input.ptr;
       return *this;
     }

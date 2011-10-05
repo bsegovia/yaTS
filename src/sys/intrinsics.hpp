@@ -67,6 +67,16 @@ INLINE size_t __btr(size_t v, size_t i) {
 
 #endif
 
+typedef int32 atomic32_t;
+
+INLINE int32 atomic_add(volatile int32* m, const int32 v) {
+  return _InterlockedExchangeAdd((volatile long*)m,v);
+}
+
+INLINE int32 atomic_cmpxchg(volatile int32* m, const int32 v, const int32 c) {
+  return _InterlockedCompareExchange((volatile long*)m,v,c);
+}
+
 #if defined(__X86_64__)
 
 typedef int64 atomic_t;
@@ -82,14 +92,6 @@ INLINE int64 atomic_cmpxchg(volatile int64* m, const int64 v, const int64 c) {
 #else
 
 typedef int32 atomic_t;
-
-INLINE int32 atomic_add(volatile int32* m, const int32 v) {
-  return _InterlockedExchangeAdd((volatile long*)m,v);
-}
-
-INLINE int32 atomic_cmpxchg(volatile int32* m, const int32 v, const int32 c) {
-  return _InterlockedCompareExchange((volatile long*)m,v,c);
-}
 
 #endif
 

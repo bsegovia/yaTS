@@ -39,15 +39,9 @@ namespace pf
     if (affinity < 0) return thread_t(handle);
 
     // set thread affinity
-    int group = affinity / 64;
     int thread = affinity % 64;
-#if (_WIN32_WINNT >= 0x0601)
-    GROUP_AFFINITY aff;
-    aff.Group = (WORD)group;
-    aff.Mask = (KAFFINITY)(1L << thread);
-    SetThreadGroupAffinity(handle,&aff,NULL);
-#endif
     SetThreadAffinityMask(handle, DWORD_PTR(1L << thread));
+
     return thread_t(handle);
   }
 
@@ -151,7 +145,7 @@ namespace pf
 
   static void* threadStartup(ThreadStartupData* parg)
   {
-    ThreadStartupData arg = *parg; DELETE(parg); parg = NULL;
+    ThreadStartupData arg = *parg; PF_DELETE(parg); parg = NULL;
     setAffinity(arg.affinity);
     arg.f(arg.arg);
     return NULL;
@@ -163,8 +157,8 @@ namespace pf
     pthread_attr_init(&attr);
     if (stack_size > 0) pthread_attr_setstacksize (&attr, stack_size);
 
-    pthread_t* tid = NEW(pthread_t);
-    ThreadStartupData* startup = NEW(ThreadStartupData);
+    pthread_t* tid = PF_NEW(pthread_t);
+    ThreadStartupData* startup = PF_NEW(ThreadStartupData);
     startup->f = f;
     startup->arg = arg;
     startup->affinity = affinity;
@@ -180,16 +174,16 @@ namespace pf
   void join(thread_t tid) {
     if (pthread_join(*(pthread_t*)tid, NULL) != 0)
       FATAL("pthread_join error");
-    DELETE((pthread_t*)tid);
+    PF_DELETE((pthread_t*)tid);
   }
 
   void destroyThread(thread_t tid) {
     pthread_cancel(*(pthread_t*)tid);
-    DELETE((pthread_t*)tid);
+    PF_DELETE((pthread_t*)tid);
   }
 
   tls_t createTls() {
-    pthread_key_t* key = NEW(pthread_key_t);
+    pthread_key_t* key = PF_NEW(pthread_key_t);
     if (pthread_key_create(key,NULL) != 0)
       FATAL("pthread_key_create error");
     return tls_t(key);
@@ -207,7 +201,7 @@ namespace pf
   void destroyTls(tls_t tls) {
     if (pthread_key_delete(*(pthread_key_t*)tls) != 0)
       FATAL("pthread_key_delete error");
-    DELETE((pthread_key_t*)tls);
+    PF_DELETE((pthread_key_t*)tls);
   }
 }
 #endif
