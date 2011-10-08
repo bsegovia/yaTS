@@ -152,6 +152,8 @@ namespace pf {
     INLINE uint32 getThreadID(void) { return uint32(this->threadID); }
     /*! Try to get a task from all the current queues */
     INLINE Task* getTask(void);
+    /*! Allow to update the task state when scheduled */
+    INLINE void setTaskState(Task *task, int state) { task->state = state; }
     /*! Run the task and recursively handle the tasks to start and to end */
     void runTask(Task *task);
     /*! Data provided to each thread */
@@ -178,7 +180,6 @@ namespace pf {
     friend class TaskSet;         // ... task sets ...
     friend class TaskAllocator;   // ... task allocator use the tasking system
     enum { queueSize = 512 };     //!< Number of task per queue
-    //enum { queueSize = 1 };     //!< Number of task per queue
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskWorkStealingQueue<queueSize> *wsQueues;//!< 1 queue per thread
     TaskAffinityQueue<queueSize> *afQueues;    //!< 1 queue per thread
@@ -296,7 +297,7 @@ namespace pf {
     const uint16 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    IF_DEBUG(task.state = TaskState::READY);
+    task.state = TaskState::READY;
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -338,7 +339,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    IF_DEBUG(task.state = TaskState::READY);
+    task.state = TaskState::READY;
     this->tasks[prio][this->head[prio] % elemNum] = &task;
     this->head[prio]++;
     IF_TASK_STATISTICS(statInsertNum++);
@@ -508,9 +509,9 @@ namespace pf {
         inactivityNum++;
       if (isMainThread) {
         if (UNLIKELY(This->deadMain))
-          goto end;
+          break;
       } else if (UNLIKELY(This->dead))
-        goto end;
+        break;
       if (UNLIKELY(inactivityNum >= maxInactivityNum)) {
         inactivityNum = 0;
         yield(yieldTime);
@@ -518,7 +519,6 @@ namespace pf {
         yieldTime = std::min(PF_TASK_MAX_YIELD_TIME, yieldTime<<1);
       }
     }
-  end:
     PF_DELETE(thread);
   }
 
@@ -613,7 +613,7 @@ namespace pf {
       // sets can be run concurrently by several threads)
       assert(task->state == TaskState::READY ||
              task->state == TaskState::RUNNING);
-      IF_DEBUG(task->state = TaskState::RUNNING);
+      task->state = TaskState::RUNNING;
       nextToRun = task->run();
       Task *toRelease = task;
 
@@ -623,7 +623,7 @@ namespace pf {
 
         // We are done here
         if (stillRunning == 0) {
-          IF_DEBUG(task->state = TaskState::DONE);
+          task->state = TaskState::DONE;
           // Start the tasks if they become ready
           if (task->toBeStarted) {
             task->toBeStarted->toStart--;
@@ -641,9 +641,9 @@ namespace pf {
       if (toRelease->refDec()) PF_DELETE(toRelease);
 
       // Handle the tasks directly passed by the user
-      IF_DEBUG(if (nextToRun) assert(nextToRun->state == TaskState::NEW));
+      if (nextToRun) assert(nextToRun->state == TaskState::NEW);
       task = nextToRun;
-      IF_DEBUG(if (task) task->state = TaskState::READY);
+      if (task) task->state = TaskState::READY;
     } while (task);
   }
 

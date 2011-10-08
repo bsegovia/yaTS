@@ -145,14 +145,10 @@ namespace pf {
     };
   };
 
-  /*! Describe the current state of a task. This is only used in DEBUG mode to
-   *  assert the correctness of the operations (like Task::starts or Task::ends
-   *  which only operates on tasks with specific states). To be honest, this is a
-   *  bit bullshit code. I think using different proxy types for tasks based on
-   *  their state is the way to go. This would enforce correctness of the code
-   *  through the typing system which is just better since static. Anyway.
+  /*! Describe the current state of a task. This asserts the correctness of the
+   * operations (like Task::starts or Task::ends which only operates on tasks
+   * with specific states)
    */
-#ifndef NDEBUG
   struct TaskState {
     enum {
       NEW       = 0u,
@@ -164,7 +160,6 @@ namespace pf {
       INVALID   = 0xffffu
     };
   };
-#endif /* NDEBUG */
 
   /*! Interface for all tasks handled by the tasking system */
   class Task : public RefCount
@@ -174,10 +169,9 @@ namespace pf {
     INLINE Task(const char *taskName = NULL) :
       name(taskName),
       toStart(1), toEnd(1),
-      priority(uint16(TaskPriority::NORMAL)), affinity(0xffffu)
-#ifndef NDEBUG
-      , state(uint16(TaskState::NEW))
-#endif
+      priority(uint16(TaskPriority::NORMAL)),
+      state(uint16(TaskState::NEW)),
+      affinity(0xffffu)
     {
       // The scheduler will remove this reference once the task is done
       this->refInc();
@@ -228,6 +222,8 @@ namespace pf {
 #endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
   private:
+    template <int> friend struct TaskWorkStealingQueue; //!< Contains tasks
+    template <int> friend struct TaskAffinityQueue;     //!< Contains tasks
     friend class TaskSet;        //!< Will tweak the ending criterium
     friend class TaskScheduler;  //!< Needs to access everything
     Ref<Task> toBeEnded;         //!< Signals it when finishing
@@ -235,9 +231,9 @@ namespace pf {
     const char *name;            //!< Debug facility mostly
     Atomic32 toStart;            //!< MBZ before starting
     Atomic32 toEnd;              //!< MBZ before ending
-    uint16 priority;             //!< Task priority
+    uint8 priority;              //!< Task priority
+    uint8 state;                 //!< Will assert correctness of the operations
     uint16 affinity;             //!< The task will run on a particular thread
-  public: IF_DEBUG(uint16 state);//!< Will assert correctness of the operations
   };
 
   /*! Allow the run function to be executed several times */
