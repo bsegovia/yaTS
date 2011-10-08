@@ -12,7 +12,6 @@
 // We therefore *manually* handle the extra references the scheduler may have
 // on a task. This is nasty but maintains a reasonnable speed in the system.
 // Using Ref<Task> in the queues makes the system roughly twice slower
-#define PF_TASK_STATICTICS 0
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) EXPR
 #else
@@ -494,17 +493,30 @@ namespace pf {
   {
     threadID = uint32(thread->tid);
     TaskScheduler *This = &thread->scheduler;
+    const int maxInactivityNum = This->getThreadNum() * PF_TASK_TRIES_BEFORE_YIELD;
+    int inactivityNum = 0;
+    int yieldTime = 0;
 
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
     for (;;) {
       Task *task = This->getTask();
-      if (task) This->runTask(task);
+      if (task) {
+        This->runTask(task);
+        yieldTime = inactivityNum = 0;
+      } else
+        inactivityNum++;
       if (isMainThread) {
         if (UNLIKELY(This->deadMain))
           goto end;
       } else if (UNLIKELY(This->dead))
         goto end;
+      if (UNLIKELY(inactivityNum >= maxInactivityNum)) {
+        inactivityNum = 0;
+        yield(yieldTime);
+        yieldTime = std::max(yieldTime, 1);
+        yieldTime = std::min(PF_TASK_MAX_YIELD_TIME, yieldTime<<1);
+      }
     }
   end:
     PF_DELETE(thread);

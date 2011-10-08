@@ -49,7 +49,7 @@ namespace pf
     if (affinity >= 0) SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR(1L << affinity));
   }
 
-  void yield() { Sleep(0); }
+  void yield(int time) { Sleep(time); }
 
   void join(thread_t tid) {
     WaitForSingleObject(HANDLE(tid), INFINITE);
@@ -169,7 +169,10 @@ namespace pf
     return thread_t(tid);
   }
 
-  void yield() { sched_yield(); }
+  void yield(int time) {
+    if (time == 0) sched_yield();
+    else usleep(time * 1000);
+  }
 
   void join(thread_t tid) {
     if (pthread_join(*(pthread_t*)tid, NULL) != 0)

@@ -4,7 +4,7 @@
 #include "sys/ref.hpp"
 #include "sys/atomic.hpp"
 
-/*                 *** OVERVIEW OF THE TASKING SYSTEM ***
+/*                   *** OVERVIEW OF THE TASKING SYSTEM ***
  *
  * Quick recap of what we have here. Basically, a "tasking system" here means
  * the possibility to schedule and asynchronously run functions in shared memory
@@ -45,7 +45,7 @@
  * hide the IO latency from the task itself. At least, you can keep the HW
  * thread busy if you want to.
  *
- *                 *** SOME DETAILS ABOUT THE IMPLEMENTATION ***
+ *               *** SOME DETAILS ABOUT THE IMPLEMENTATION ***
  *
  * First thing is the comments in tasking.cpp which give some details about
  * the implementation. Roughly the implementation is done around three
@@ -113,8 +113,19 @@
  * the LRB era.
  */
 
+/*! Use or not the fast allocator */
 #define PF_TASK_USE_DEDICATED_ALLOCATOR 1
 
+/*! Store or not run-time statistics in the tasking system */
+#define PF_TASK_STATICTICS 0
+
+/*! Give number of tries before yielding (multiplied by number of threads) */
+#define PF_TASK_TRIES_BEFORE_YIELD 256
+
+/*! Maximum time in ms the thread can be swicthed off */
+#define PF_TASK_MAX_YIELD_TIME 16
+
+/*! Maximum time the thread is yielded */
 namespace pf {
 
   /*! A task with a higher priority will be preferred to a task with a lower
