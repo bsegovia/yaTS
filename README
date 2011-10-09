@@ -31,6 +31,10 @@ Beyond the build mode, you may choose to have:
 
 In tasking.hpp, you have some options to configure the tasking system.
 
+Also, note that parts of the code (related to mutexes/conditions/multi-platform
+abstraction) were directly taken from Intel Embree project:
+http://software.intel.com/en-us/articles/embree-photo-realistic-ray-tracing-kernels/
+
 How to run
 ----------
 
