@@ -22,8 +22,8 @@
 
 /*                   *** OVERVIEW OF THE TASKING SYSTEM ***
  *
- * Quick recap of what we have here. Basically, a "tasking system" here means
- * the possibility to schedule and asynchronously run functions in shared memory
+ * Quick recap of what we have here. Basically, a "tasking system" offers the
+ * possibility to schedule and asynchronously run functions in shared memory
  * "system threads". This is basically a thread pool. However, we try to propose
  * more in this API by letting the user:
  * 1 - Define *dependencies* between tasks
@@ -235,7 +235,7 @@ namespace pf {
     virtual void run(size_t elemID) = 0;
 
   private:
-    virtual Task* run(void);  //!< Reimplemented for all task sets
+    virtual Task* run(void); //!< Reimplemented for all task sets
     Atomic elemNum;          //!< Number of outstanding elements
   };
 
