@@ -389,7 +389,7 @@ namespace pf {
               << double(chunkNum * TaskStorage::chunkSize) / 1024
               << "KB" << std::endl;
 #endif /* PF_TASK_STATICTICS */
-    uint32 allocateNum = 0;
+    int64 allocateNum = 0;
     for (size_t i = 0; i < threadNum; ++i)
       allocateNum += this->local[i].allocateNum;
     FATAL_IF (allocateNum < 0, "** You may have deleted a task twice **");

@@ -18,7 +18,10 @@
 #include "sys/atomic.hpp"
 #include "sys/mutex.hpp"
 
+#if PF_DEBUG_MEMORY
 #include <unordered_map>
+#endif /* PF_DEBUG_MEMORY */
+
 #include <map>
 #include <vector>
 
