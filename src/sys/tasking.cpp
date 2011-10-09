@@ -1,3 +1,19 @@
+// ======================================================================== //
+// Copyright (C) 2011 Benjamin Segovia                                      //
+//                                                                          //
+// Licensed under the Apache License, Version 2.0 (the "License");          //
+// you may not use this file except in compliance with the License.         //
+// You may obtain a copy of the License at                                  //
+//                                                                          //
+//     http://www.apache.org/licenses/LICENSE-2.0                           //
+//                                                                          //
+// Unless required by applicable law or agreed to in writing, software      //
+// distributed under the License is distributed on an "AS IS" BASIS,        //
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. //
+// See the License for the specific language governing permissions and      //
+// limitations under the License.                                           //
+// ======================================================================== //
+
 #include "sys/tasking.hpp"
 #include "sys/ref.hpp"
 #include "sys/thread.hpp"
@@ -28,7 +44,7 @@ namespace pf {
   class TaskAllocator; // Dedicated to allocate tasks and task sets
 
   /*! Fast random number generator (TODO find something that works) */
-  struct ALIGNED(CACHE_LINE) FastRand {
+  struct CACHE_LINE_ALIGNED FastRand {
     FastRand(void) { z = rand(); }
     INLINE unsigned long rand(void) { return ++z; }
     unsigned long z;
@@ -37,7 +53,7 @@ namespace pf {
 
   /*! Structure used to issue ready-to-process tasks */
   template <int elemNum>
-  struct ALIGNED(CACHE_LINE) TaskQueue
+  struct CACHE_LINE_ALIGNED TaskQueue
   {
   public:
     INLINE TaskQueue(void) {
@@ -774,6 +790,5 @@ namespace pf {
   }
 }
 
-#undef PF_TASK_STATICTICS
 #undef IF_TASK_STATISTICS
 

@@ -17,7 +17,7 @@
 #ifndef __PF_PLATFORM_HPP__
 #define __PF_PLATFORM_HPP__
 
-#include <stddef.h>
+#include <cstddef>
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
