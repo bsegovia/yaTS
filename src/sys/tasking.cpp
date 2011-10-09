@@ -167,8 +167,7 @@ namespace pf {
   private:
 
     /*! Function run by each thread */
-    template <bool isMainThread>
-    static void threadFunction(Thread *thread);
+    template <bool isMainThread> static void threadFunction(Thread *thread);
     /*! Schedule a task which is now ready to execute */
     INLINE void schedule(Task &task);
     /*! Try to push a task in the queue. Returns true if OK, false if the queues
@@ -294,7 +293,7 @@ namespace pf {
   // - Stores are not reordered with older loads
   template<int elemNum>
   bool TaskWorkStealingQueue<elemNum>::insert(Task &task) {
-    const uint16 prio = task.getPriority();
+    const uint32 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     task.state = TaskState::READY;
@@ -310,7 +309,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
-    const uint16 prio = __bsf(mask);
+    const uint32 prio = __bsf(mask);
     const int32 index = --this->head[prio];
     Task* task = this->tasks[prio][index % elemNum];
     IF_TASK_STATISTICS(statGetNum++);
@@ -323,7 +322,7 @@ namespace pf {
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
-    const uint16 prio = __bsf(mask);
+    const uint32 prio = __bsf(mask);
     const int32 index = this->tail[prio];
     Task* stolen = this->tasks[prio][index % elemNum];
     this->tail[prio]++;
@@ -333,7 +332,7 @@ namespace pf {
 
   template<int elemNum>
   bool TaskAffinityQueue<elemNum>::insert(Task &task) {
-    const uint16 prio = task.getPriority();
+    const uint32 prio = task.getPriority();
     // No double check here (I mean, before and after the lock. We just take the
     // optimistic approach ie we suppose the queue is never full)
     Lock<MutexActive> lock(this->mutex);
@@ -351,7 +350,7 @@ namespace pf {
     if (this->getActiveMask() == 0) return NULL;
     Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
-    const uint16 prio = __bsf(mask);
+    const uint32 prio = __bsf(mask);
     Task* task = this->tasks[prio][this->tail[prio] % elemNum];
     this->tail[prio]++;
     IF_TASK_STATISTICS(statGetNum++);
@@ -554,7 +553,7 @@ namespace pf {
   }
 
   bool TaskScheduler::trySchedule(Task &task) {
-    const uint16 affinity = task.getAffinity();
+    const uint32 affinity = task.getAffinity();
     bool success;
     if (affinity >= this->queueNum)
       success = wsQueues[this->threadID].insert(task);

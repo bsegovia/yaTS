@@ -169,9 +169,10 @@ namespace pf {
     INLINE Task(const char *taskName = NULL) :
       name(taskName),
       toStart(1), toEnd(1),
-      priority(uint16(TaskPriority::NORMAL)),
-      state(uint16(TaskState::NEW)),
-      affinity(0xffffu)
+      affinity(0xffffu),
+      priority(uint8(TaskPriority::NORMAL)),
+      state(uint8(TaskState::NEW)),
+      freed(0u)
     {
       // The scheduler will remove this reference once the task is done
       this->refInc();
@@ -203,7 +204,7 @@ namespace pf {
       this->toBeEnded = other;
     }
     /*! Set / get task priority and affinity */
-    INLINE void setPriority(uint16 prio) {
+    INLINE void setPriority(uint8 prio) {
       assert(this->state == TaskState::NEW);
       this->priority = prio;
     }
@@ -211,7 +212,7 @@ namespace pf {
       assert(this->state == TaskState::NEW);
       this->affinity = affi;
     }
-    INLINE uint16 getPriority(void) const { return this->priority; }
+    INLINE uint8 getPriority(void) const { return this->priority; }
     INLINE uint16 getAffinity(void) const { return this->affinity; }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
@@ -224,16 +225,17 @@ namespace pf {
   private:
     template <int> friend struct TaskWorkStealingQueue; //!< Contains tasks
     template <int> friend struct TaskAffinityQueue;     //!< Contains tasks
-    friend class TaskSet;        //!< Will tweak the ending criterium
-    friend class TaskScheduler;  //!< Needs to access everything
-    Ref<Task> toBeEnded;         //!< Signals it when finishing
-    Ref<Task> toBeStarted;       //!< Triggers it when ready
-    const char *name;            //!< Debug facility mostly
-    Atomic32 toStart;            //!< MBZ before starting
-    Atomic32 toEnd;              //!< MBZ before ending
-    uint8 priority;              //!< Task priority
-    uint8 state;                 //!< Will assert correctness of the operations
-    uint16 affinity;             //!< The task will run on a particular thread
+    friend class TaskSet;      //!< Will tweak the ending criterium
+    friend class TaskScheduler;//!< Needs to access everything
+    Ref<Task> toBeEnded;       //!< Signals it when finishing
+    Ref<Task> toBeStarted;     //!< Triggers it when ready
+    const char *name;          //!< Debug facility mostly
+    Atomic32 toStart;          //!< MBZ before starting
+    Atomic32 toEnd;            //!< MBZ before ending
+    uint16 affinity;           //!< The task will run on a particular thread
+    uint8 priority;            //!< Task priority
+    uint8 state:7;             //!< Assert correctness of the operations
+    uint8 freed:1;             //!< Everything must be freed when the system is done
   };
 
   /*! Allow the run function to be executed several times */

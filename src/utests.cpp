@@ -286,15 +286,14 @@ public:
   AffinityTask(Task *done, Atomic &counter, int lvl = 0) :
     Task("AffinityTask"), counter(counter), lvl(lvl) {}
   virtual Task *run(void) {
-    if (lvl == 1) {
+    if (lvl == 1)
       counter++;
-    }
     else {
       const uint32 threadNum = TaskingSystemGetThreadNum();
       for (uint32 i = 0; i < taskToSpawn; ++i) {
         Task *task = PF_NEW(AffinityTask, done.ptr, counter, 1);
         task->setAffinity(i % threadNum);
-        task->ends(done.ptr);
+        task->ends(this);
         task->scheduled();
       }
     }
@@ -308,8 +307,9 @@ public:
 START_UTEST(TestAffinity)
   Atomic counter(0u);
   TaskingSystemStart();
+  enum { batchNum = 128 };
   Task *done = PF_NEW(DoneTask);
-  for (size_t i = 0; i < 64; ++i) {
+  for (size_t i = 0; i < batchNum; ++i) {
     Task *task = PF_NEW(AffinityTask, done, counter, 0);
     task->starts(done);
     task->scheduled();
@@ -317,13 +317,89 @@ START_UTEST(TestAffinity)
   done->scheduled();
   TaskingSystemEnter();
   TaskingSystemEnd();
-  FATAL_IF (counter != 64 * AffinityTask::taskToSpawn, "TestFullQueue failed");
+  FATAL_IF (counter != batchNum * AffinityTask::taskToSpawn, "TestAffinity failed");
 END_UTEST(TestAffinity)
+
+///////////////////////////////////////////////////////////////////////////////
+// Exponential Fibonnaci to stress the task spawning and the completions
+///////////////////////////////////////////////////////////////////////////////
+static Atomic fiboNum(0u);
+class FiboSpawnTask : public Task {
+public:
+  FiboSpawnTask(uint64 rank, uint64 *root = NULL) :
+    Task("FiboSpawnTask"), rank(rank), root(root) {fiboNum++;}
+  virtual Task* run(void);
+  uint64 rank, sumLeft, sumRight;
+  uint64 *root;
+};
+
+class FiboSumTask : public Task {
+public:
+  FiboSumTask(FiboSpawnTask *fibo) : Task("FiboSumTask"), fibo(fibo) {}
+  virtual Task* run(void);
+  FiboSpawnTask *fibo;
+};
+
+Task *FiboSpawnTask::run(void) {
+  if (rank > 1) {
+    FiboSpawnTask *left = PF_NEW(FiboSpawnTask, rank-1, &this->sumLeft);
+    FiboSpawnTask *right = PF_NEW(FiboSpawnTask, rank-2, &this->sumRight);
+    FiboSumTask *sum = PF_NEW(FiboSumTask, this);
+    left->starts(sum);
+    right->starts(sum);
+    sum->ends(this);
+    sum->scheduled();
+    left->scheduled();
+    return right;
+  } else if (rank == 1) {
+    if (root) *root = 1;
+    return NULL;
+  } else {
+    if (root) *root = 0;
+    return NULL;
+  }
+}
+
+Task *FiboSumTask::run(void) {
+  assert(fibo);
+  if (fibo->root) *fibo->root = fibo->sumLeft + fibo->sumRight;
+  return NULL;
+}
+
+static uint64 fifoLinear(uint64 rank)
+{
+  uint64 rn0 = 0, rn1 = 1;
+  if (rank == 0) return rn0;
+  if (rank == 1) return rn1;
+  for (uint64 i = 2; i <= rank; ++i) {
+    uint64 sum = rn0 + rn1;
+    rn0 = rn1;
+    rn1 = sum;
+  }
+  return rn1;
+}
+
+START_UTEST(TestFibo)
+  TaskingSystemStart();
+  {
+    const uint64 rank = 32;
+    uint64 sum;
+    Ref<FiboSpawnTask> fibo = PF_NEW(FiboSpawnTask, rank, &sum);
+    Task *done = PF_NEW(DoneTask);
+    fibo->starts(done);
+    fibo->scheduled();
+    done->scheduled();
+    TaskingSystemEnter();
+    std::cout << "Fibonacci Task Num: "<< fiboNum << std::endl;
+    FATAL_IF (sum != fifoLinear(rank), "TestFibonacci failed");
+  }
+  TaskingSystemEnd();
+END_UTEST(TestFibo)
 
 int main(int argc, char **argv)
 {
+  std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
-
   TestDummy();
   TestTree<NodeTaskOpt>();
   TestTree<NodeTask>();
@@ -333,6 +409,7 @@ int main(int argc, char **argv)
   TestAllocator();
   TestFullQueue();
   TestAffinity();
+  TestFibo();
   dumpAlloc();
   endMemoryDebugger();
   return 0;
