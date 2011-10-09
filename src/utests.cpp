@@ -465,8 +465,6 @@ int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
-  TestAffinity();
-  TestFiboWithWait();
   TestDummy();
   TestTree<NodeTaskOpt>();
   TestTree<NodeTask>();

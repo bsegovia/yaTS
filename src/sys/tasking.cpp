@@ -517,6 +517,10 @@ namespace pf {
     this->allocateNum--;
   }
 
+  // Stupid windows
+  template <typename T> INLINE T _min(T x, T y) {return x<y?x:y;}
+  template <typename T> INLINE T _max(T x, T y) {return x>y?x:y;}
+
   template <bool isMainThread>
   void TaskScheduler::threadFunction(TaskScheduler::Thread *thread)
   {
@@ -543,8 +547,8 @@ namespace pf {
       if (UNLIKELY(inactivityNum >= maxInactivityNum)) {
         inactivityNum = 0;
         yield(yieldTime);
-        yieldTime = std::max(yieldTime, 1);
-        yieldTime = std::min(PF_TASK_MAX_YIELD_TIME, yieldTime<<1);
+        yieldTime = _max(yieldTime, 1);
+        yieldTime = _min(PF_TASK_MAX_YIELD_TIME, yieldTime<<1);
       }
     }
     PF_DELETE(thread);

@@ -35,9 +35,10 @@ namespace pf
   /*! Store each allocation data */
   struct AllocData {
     INLINE AllocData(void) {}
-    INLINE AllocData(int fileName_, int functionName_, int line_, int alloc_) :
+    INLINE AllocData(int fileName_, int functionName_, int line_, intptr_t alloc_) :
       fileName(fileName_), functionName(functionName_), line(line_), alloc(alloc_) {}
-    int fileName, functionName, line, alloc;
+    int fileName, functionName, line;
+	intptr_t alloc;
   };
 
   /*! Store allocation information */
@@ -70,12 +71,12 @@ namespace pf
     int fileName, functionName;
     if (fileIt == staticStringMap.end()) {
       staticStringVector.push_back(file);
-      staticStringMap[file] = fileName = staticStringVector.size() - 1;
+      staticStringMap[file] = fileName = int(staticStringVector.size()) - 1;
     } else
       fileName = staticStringMap[file];
     if (functionIt == staticStringMap.end()) {
       staticStringVector.push_back(function);
-      staticStringMap[function] = functionName = staticStringVector.size() - 1;
+      staticStringMap[function] = functionName = int(staticStringVector.size()) - 1;
     } else
       functionName = staticStringMap[function];
     allocMap[iptr] = AllocData(fileName, functionName, line, allocNum);
