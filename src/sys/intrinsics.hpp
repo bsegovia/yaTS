@@ -18,6 +18,8 @@
 #define __PF_INTRINSICS_H__
 
 #include "sys/platform.hpp"
+#include <xmmintrin.h>
+#include <emmintrin.h>
 
 #if defined(__WIN32__)
 
@@ -42,6 +44,8 @@ INLINE int __bts(int v, int i) {
 INLINE int __btr(int v, int i) {
   long r = v; _bittestandreset(&r,i); return r;
 }
+
+INLINE void memoryFence(void) { _mm_mfence(); }
 
 #if defined(__X86_64__) && !defined(__INTEL_COMPILER)
 
@@ -140,6 +144,8 @@ INLINE size_t __bts(size_t v, size_t i) {
 INLINE size_t __btr(size_t v, size_t i) {
   size_t r = 0; asm ("btr %1,%0" : "=r"(r) : "r"(i), "0"(v) : "flags"); return r;
 }
+
+INLINE void memoryFence(void) { _mm_mfence(); }
 
 typedef int32 atomic32_t;
 

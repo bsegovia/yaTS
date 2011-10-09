@@ -170,9 +170,7 @@ namespace pf {
     template <bool isMainThread> static void threadFunction(Thread *thread);
     /*! Schedule a task which is now ready to execute */
     INLINE void schedule(Task &task);
-    /*! Try to push a task in the queue. Returns true if OK, false if the queues
-     *  are full
-     */
+    /*! Try to push a task in the queue. Returns false if queues are full */
     INLINE bool trySchedule(Task &task);
 
     friend class Task;            //!< Tasks ...
@@ -191,7 +189,7 @@ namespace pf {
   };
 
   /*! Allocator per thread */
-  class ALIGNED(CACHE_LINE) TaskStorage
+  class CACHE_LINE_ALIGNED TaskStorage
   {
   public:
     TaskStorage(void) :
@@ -199,7 +197,7 @@ namespace pf {
       statNewChunkNum(0), statPushGlobalNum(0), statPopGlobalNum(0),
       statAllocateNum(0), statDeallocateNum(0),
 #endif /* PF_TASK_STATICTICS */
-      allocator(NULL)
+      allocator(NULL), allocateNum(0)
     {
       for (size_t i = 0; i < maxHeap; ++i) {
         this->chunk[i] = NULL;
@@ -243,10 +241,11 @@ namespace pf {
     enum { chunkSize = 1<<logChunkSize }; //!< 4KB when taking memory from std
     enum { maxHeap = 10u };      //!< One heap per size (only power of 2)
     TaskAllocator *allocator;    //!< Handles global heap
+    std::vector<void*> toFree;   //!< All chunks allocated (per thread)
     void *chunk[maxHeap];        //!< One heap per size
     uint32 currSize[maxHeap];    //!< Sum of the free task sizes
-    std::vector<void*> toFree;   //!< All chunks allocated (per thread)
-    ALIGNED_CLASS
+    int64 allocateNum;           //!< Signed because we can free a task
+                                 //   allocated elsewhere
   };
 
   /*! TaskAllocator will speed up task allocation with fast dedicated thread
@@ -365,8 +364,20 @@ namespace pf {
 
   TaskAllocator::~TaskAllocator(void) {
 #if PF_TASK_STATICTICS
-    for (size_t i = 0; i < threadNum; ++i) this->local[i].printStats();
+    uint32 chunkNum = 0;
+    for (size_t i = 0; i < threadNum; ++i) {
+      this->local[i].printStats();
+      chunkNum += this->local[i].statNewChunkNum;
+    }
+    std::cout << "Total Memory for Tasks: "
+              << double(chunkNum * TaskStorage::chunkSize) / 1024
+              << "KB" << std::endl;
 #endif /* PF_TASK_STATICTICS */
+    uint32 allocateNum = 0;
+    for (size_t i = 0; i < threadNum; ++i)
+      allocateNum += this->local[i].allocateNum;
+    FATAL_IF (allocateNum < 0, "** You may have deleted a task twice **");
+    FATAL_IF (allocateNum > 0, "** You may still hold a reference on a task **");
     PF_DELETE_ARRAY(this->local);
   }
 
@@ -388,7 +399,7 @@ namespace pf {
     IF_TASK_STATISTICS(statNewChunkNum++);
     // We store the size of the elements in the chunk header
     const uint32 elemSize = 1 << chunkID;
-    char *chunk = (char *) PF_ALIGNED_MALLOC(2*chunkSize, chunkSize);
+    char *chunk = (char *) PF_ALIGNED_MALLOC(chunkSize, chunkSize);
 
     // We store this pointer to free it later while deleting the task
     // allocator
@@ -467,6 +478,7 @@ namespace pf {
     void *curr = this->chunk[chunkID];
     this->chunk[chunkID] = *(void**) curr; // points to its predecessor
     this->currSize[chunkID] -= 1 << chunkID;
+    this->allocateNum++;
     return curr;
   }
 
@@ -486,6 +498,7 @@ namespace pf {
     // If this thread has too many free tasks, we give some to the global heap
     if (this->currSize[chunkID] > 2 * chunkSize)
       this->pushGlobal(chunkID);
+    this->allocateNum--;
   }
 
   template <bool isMainThread>
@@ -609,9 +622,11 @@ namespace pf {
     Task *nextToRun = NULL;
     do {
       // Note that the task may already be running if this is a task set (task
-      // sets can be run concurrently by several threads)
-      assert(task->state == TaskState::READY ||
-             task->state == TaskState::RUNNING);
+      // sets can be run concurrently by several threads).
+#ifndef NDEBUG
+      const uint32 state = task->state;
+      assert(state == TaskState::READY || state == TaskState::RUNNING);
+#endif /* NDEBUG */
       task->state = TaskState::RUNNING;
       nextToRun = task->run();
       Task *toRelease = task;
@@ -702,6 +717,14 @@ namespace pf {
     return NULL;
   }
 
+  void Task::waitForCompletion(void) {
+    assert(this->state != TaskState::NEW);
+    while (this->state != TaskState::DONE) {
+      Task *someTask = scheduler->getTask();
+      if (someTask) scheduler->runTask(someTask);
+    }
+  }
+
   void TaskingSystemStart(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
     scheduler = PF_NEW(TaskScheduler);
@@ -732,7 +755,7 @@ namespace pf {
 
   uint32 TaskingSystemGetThreadNum(void) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
-    return scheduler->getThreadNum();
+    return scheduler->getThreadNum() + 1;
   }
 
   uint32 TaskingSystemGetThreadID(void) {

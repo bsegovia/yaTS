@@ -366,7 +366,7 @@ Task *FiboSumTask::run(void) {
   return NULL;
 }
 
-static uint64 fifoLinear(uint64 rank)
+static uint64 fiboLinear(uint64 rank)
 {
   uint64 rn0 = 0, rn1 = 1;
   if (rank == 0) return rn0;
@@ -391,15 +391,66 @@ START_UTEST(TestFibo)
     done->scheduled();
     TaskingSystemEnter();
     std::cout << "Fibonacci Task Num: "<< fiboNum << std::endl;
-    FATAL_IF (sum != fifoLinear(rank), "TestFibonacci failed");
+    FATAL_IF (sum != fiboLinear(rank), "TestFibonacci failed");
   }
   TaskingSystemEnd();
 END_UTEST(TestFibo)
+
+///////////////////////////////////////////////////////////////////////////////
+// Fibonacci but we use the wait capablity instead
+///////////////////////////////////////////////////////////////////////////////
+static Atomic waitFiboNum(0u);
+class FiboWithWaitTask : public Task {
+public:
+  FiboWithWaitTask (uint64 rank, uint64 *root = NULL) :
+    Task("FiboSpawnTask"), rank(rank), root(root) {waitFiboNum++;}
+  virtual Task* run(void);
+  uint64 rank, sumLeft, sumRight;
+  uint64 *root;
+};
+
+Task *FiboWithWaitTask::run(void) {
+  if (rank > 1) {
+    Ref<FiboSpawnTask> left = PF_NEW(FiboSpawnTask, rank-1, &this->sumLeft);
+    Ref<FiboSpawnTask> right = PF_NEW(FiboSpawnTask, rank-2, &this->sumRight);
+    left->scheduled();
+    right->scheduled();
+    left->waitForCompletion();
+    right->waitForCompletion();
+    if (root) *root = sumLeft + sumRight;
+    return NULL;
+  } else if (rank == 1) {
+    if (root) *root = 1;
+    return NULL;
+  } else {
+    if (root) *root = 0;
+    return NULL;
+  }
+}
+
+START_UTEST(TestFiboWithWait)
+  TaskingSystemStart();
+  {
+    const uint64 rank = 32;
+    uint64 sum;
+    Ref<FiboWithWaitTask> fibo = PF_NEW(FiboWithWaitTask, rank, &sum);
+    Task *done = PF_NEW(DoneTask);
+    fibo->starts(done);
+    fibo->scheduled();
+    done->scheduled();
+    TaskingSystemEnter();
+    std::cout << "Fibonacci Task Num: "<< fiboNum << std::endl;
+    FATAL_IF (sum != fiboLinear(rank), "TestFibonacci (with wait) failed");
+  }
+  TaskingSystemEnd();
+END_UTEST(TestFiboWithWaitTask)
 
 int main(int argc, char **argv)
 {
   std::cout << sizeof(Task) << std::endl;
   startMemoryDebugger();
+  TestAffinity();
+  TestFiboWithWait();
   TestDummy();
   TestTree<NodeTaskOpt>();
   TestTree<NodeTask>();
@@ -410,6 +461,7 @@ int main(int argc, char **argv)
   TestFullQueue();
   TestAffinity();
   TestFibo();
+  TestFiboWithWait();
   dumpAlloc();
   endMemoryDebugger();
   return 0;

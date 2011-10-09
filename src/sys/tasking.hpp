@@ -122,8 +122,8 @@
 /*! Give number of tries before yielding (multiplied by number of threads) */
 #define PF_TASK_TRIES_BEFORE_YIELD 256
 
-/*! Maximum time in ms the thread can be swicthed off */
-#define PF_TASK_MAX_YIELD_TIME 16
+/*! Maximum time in milliseconds the thread can be swicthed off */
+#define PF_TASK_MAX_YIELD_TIME 1024
 
 /*! Maximum time the thread is yielded */
 namespace pf {
@@ -166,17 +166,7 @@ namespace pf {
   {
   public:
     /*! It can complete one task and can be continued by one other task */
-    INLINE Task(const char *taskName = NULL) :
-      name(taskName),
-      toStart(1), toEnd(1),
-      affinity(0xffffu),
-      priority(uint8(TaskPriority::NORMAL)),
-      state(uint8(TaskState::NEW)),
-      freed(0u)
-    {
-      // The scheduler will remove this reference once the task is done
-      this->refInc();
-    }
+    INLINE Task(const char *taskName = NULL);
     /*! To override while specifying a task. This is basically the code to
      * execute. The user can optionally return a task which will by-pass the
      * scheduler and will run *immediately* after this one. This is a classical
@@ -186,34 +176,16 @@ namespace pf {
     /*! Task is built and will be ready when all start dependencies are over */
     void scheduled(void);
     /*! The given task cannot *start* as long as "other" is not complete */
-    INLINE void starts(Task *other) {
-      if (UNLIKELY(other == NULL)) return;
-      assert(other->state == TaskState::NEW);
-      if (UNLIKELY(this->toBeStarted)) return; // already a task to start
-      other->toStart++;
-      this->toBeStarted = other;
-    }
+    INLINE void starts(Task *other);
     /*! The given task cannot *end* as long as "other" is not complete */
-    INLINE void ends(Task *other) {
-      if (UNLIKELY(other == NULL)) return;
-      assert(other->state == TaskState::NEW ||
-             other->state == TaskState::SCHEDULED ||
-             other->state == TaskState::RUNNING);
-      if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
-      other->toEnd++;
-      this->toBeEnded = other;
-    }
+    INLINE void ends(Task *other);
     /*! Set / get task priority and affinity */
-    INLINE void setPriority(uint8 prio) {
-      assert(this->state == TaskState::NEW);
-      this->priority = prio;
-    }
-    INLINE void setAffinity(uint16 affi) {
-      assert(this->state == TaskState::NEW);
-      this->affinity = affi;
-    }
-    INLINE uint8 getPriority(void) const { return this->priority; }
-    INLINE uint16 getAffinity(void) const { return this->affinity; }
+    INLINE void setPriority(uint8 prio);
+    INLINE void setAffinity(uint16 affi);
+    INLINE uint8 getPriority(void) const;
+    INLINE uint16 getAffinity(void) const;
+    /*! The scheduler will run tasks as long as this task is not done */
+    void waitForCompletion(void);
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
     /*! Tasks use a scalable fixed size allocator */
@@ -234,8 +206,7 @@ namespace pf {
     Atomic32 toEnd;            //!< MBZ before ending
     uint16 affinity;           //!< The task will run on a particular thread
     uint8 priority;            //!< Task priority
-    uint8 state:7;             //!< Assert correctness of the operations
-    uint8 freed:1;             //!< Everything must be freed when the system is done
+    volatile uint8 state;      //!< Assert correctness of the operations
   };
 
   /*! Allow the run function to be executed several times */
@@ -243,8 +214,7 @@ namespace pf {
   {
   public:
     /*! elemNum is the number of times to execute the run function */
-    INLINE TaskSet(size_t elemNum, const char *name = NULL) :
-      Task(name), elemNum(elemNum) {}
+    INLINE TaskSet(size_t elemNum, const char *name = NULL);
     /*! This function is user-specified */
     virtual void run(size_t elemID) = 0;
 
@@ -278,6 +248,55 @@ namespace pf {
    *  to overlap some IO for example. Return true if anything was executed
    */
   bool TaskingSystemRunAnyTask(void);
+
+  ///////////////////////////////////////////////////////////////////////////
+  /// Implementation of inlined functions
+  ///////////////////////////////////////////////////////////////////////////
+
+  INLINE Task::Task(const char *taskName) :
+    name(taskName),
+    toStart(1), toEnd(1),
+    affinity(0xffffu),
+    priority(uint8(TaskPriority::NORMAL)),
+    state(uint8(TaskState::NEW))
+  {
+    // The scheduler will remove this reference once the task is done
+    this->refInc();
+  }
+
+  INLINE void Task::starts(Task *other) {
+    if (UNLIKELY(other == NULL)) return;
+    assert(other->state == TaskState::NEW);
+    if (UNLIKELY(this->toBeStarted)) return; // already a task to start
+    other->toStart++;
+    this->toBeStarted = other;
+  }
+
+  INLINE void Task::ends(Task *other) {
+    if (UNLIKELY(other == NULL)) return;
+    assert(other->state == TaskState::NEW ||
+        other->state == TaskState::SCHEDULED ||
+        other->state == TaskState::RUNNING);
+    if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
+    other->toEnd++;
+    this->toBeEnded = other;
+  }
+
+  INLINE void Task::setPriority(uint8 prio) {
+    assert(this->state == TaskState::NEW);
+    this->priority = prio;
+  }
+
+  INLINE void Task::setAffinity(uint16 affi) {
+    assert(this->state == TaskState::NEW);
+    this->affinity = affi;
+  }
+
+  INLINE uint8 Task::getPriority(void)  const { return this->priority; }
+  INLINE uint16 Task::getAffinity(void) const { return this->affinity; }
+
+  INLINE TaskSet::TaskSet(size_t elemNum, const char *name) :
+    Task(name), elemNum(elemNum) {}
 
 } /* namespace pf */
 

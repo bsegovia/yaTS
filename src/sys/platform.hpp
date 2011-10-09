@@ -103,6 +103,7 @@
 
 /*! Modern x86 processors */
 #define CACHE_LINE 64
+#define CACHE_LINE_ALIGNED ALIGNED(CACHE_LINE)
 
 #ifdef __WIN32__
 #define __dllexport extern "C" __declspec(dllexport)
