@@ -290,9 +290,12 @@ namespace pf {
 
   INLINE void Task::ends(Task *other) {
     if (UNLIKELY(other == NULL)) return;
-    assert(other->state == TaskState::NEW ||
-        other->state == TaskState::SCHEDULED ||
-        other->state == TaskState::RUNNING);
+#ifndef NDEBUG
+    const uint32 state = other->state;
+    assert(state == TaskState::NEW ||
+           state == TaskState::SCHEDULED ||
+           state == TaskState::RUNNING);
+#endif /* NDEBUG */
     if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
     other->toEnd++;
     this->toBeEnded = other;
