@@ -1,0 +1,10 @@
+yaTS 1.0.1
+- Fixed a possible race condition in the debug code
+- Fixed a very stupid performance bug which leads the thread to sleep all the
+  time when there is no worker threads...
+- Renamed TaskScheduler::threadNum into TaskScheduler::workerNum. This is less
+  confusing
+
+yaTS 1.0.0
+Initial release
+
