@@ -526,7 +526,7 @@ namespace pf {
   {
     threadID = uint32(thread->tid);
     TaskScheduler *This = &thread->scheduler;
-    const int maxInactivityNum = This->getThreadNum() * PF_TASK_TRIES_BEFORE_YIELD;
+    const int maxInactivityNum = (This->getThreadNum()+1) * PF_TASK_TRIES_BEFORE_YIELD;
     int inactivityNum = 0;
     int yieldTime = 0;
 
@@ -747,7 +747,7 @@ namespace pf {
 
   void TaskingSystemStart(void) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
-    scheduler = PF_NEW(TaskScheduler);
+    scheduler = PF_NEW(TaskScheduler, 0);
     allocator = PF_NEW(TaskAllocator, scheduler->getThreadNum()+1);
   }
 
