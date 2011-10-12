@@ -17,8 +17,8 @@
 #ifndef __PF_ALLOC_HPP__
 #define __PF_ALLOC_HPP__
 
-#include <cstdlib>
 #include "sys/platform.hpp"
+#include <cstdlib>
 
 namespace pf
 {
@@ -52,8 +52,9 @@ namespace pf
     insertAlloc(ptr, file, function, line);
     return ptr;
   }
+}
 
-  /*! Macros to handle allocation position */
+/*! Macros to handle allocation position */
 #define PF_NEW(T,...)         _insertAlloc(new T(__VA_ARGS__), __FILE__, __FUNCTION__, __LINE__)
 #define PF_NEW_ARRAY(T,N,...) _insertAlloc(new T[N](__VA_ARGS__), __FILE__, __FUNCTION__, __LINE__)
 #define PF_DELETE(X)          do { removeAlloc(X); delete X; } while (0)
@@ -63,7 +64,6 @@ namespace pf
 #define PF_FREE(X)            do { removeAlloc(X); free(X); } while (0)
 #define PF_ALIGNED_FREE(X)    do { removeAlloc(X); alignedFree(X); } while (0)
 #define PF_ALIGNED_MALLOC(SZ,ALIGN) insertAlloc(alignedMalloc(SZ,ALIGN),__FILE__, __FUNCTION__, __LINE__)
-}
 
 #endif /* __PF_ALLOC_HPP__ */
 
