@@ -141,6 +141,12 @@
 /*! Maximum time in milliseconds the thread can be swicthed off */
 #define PF_TASK_MAX_YIELD_TIME 1024
 
+/*! Main thread (the one that the system gives us) is always 0 */
+#define PF_TASK_MAIN_THREAD 0
+
+/*! No affinity means that the task can rn anywhere */
+#define PF_TASK_NO_AFFINITY 0xffffu
+
 /*! Maximum time the thread is yielded */
 namespace pf {
 
@@ -272,7 +278,7 @@ namespace pf {
   INLINE Task::Task(const char *taskName) :
     name(taskName),
     toStart(1), toEnd(1),
-    affinity(0xffffu),
+    affinity(PF_TASK_NO_AFFINITY),
     priority(uint8(TaskPriority::NORMAL)),
     state(uint8(TaskState::NEW))
   {
