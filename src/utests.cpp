@@ -72,12 +72,15 @@ START_UTEST(TestTaskSet)
   TaskingSystemStart();
   uint32 *array = PF_NEW_ARRAY(uint32, elemNum);
   for (size_t i = 0; i < elemNum; ++i) array[i] = 0;
+  double t = getSeconds();
   Task *done = PF_NEW(DoneTask);
   Task *taskSet = PF_NEW(SimpleTaskSet, elemNum, array);
   taskSet->starts(done);
   done->scheduled();
   taskSet->scheduled();
   TaskingSystemEnter();
+  t = getSeconds() - t;
+  std::cout << t * 1000. << " ms" << std::endl;
   TaskingSystemEnd();
   for (size_t i = 0; i < elemNum; ++i)
     FATAL_IF(array[i] == 0, "TestTaskSet failed");
@@ -248,10 +251,13 @@ START_UTEST(TestAllocator)
   TaskingSystemStart();
   Task *done = PF_NEW(DoneTask);
   Task *allocate = PF_NEW(AllocateTask, 1 << 10);
+  double t = getSeconds();
   allocate->starts(done);
   done->scheduled();
   allocate->scheduled();
   TaskingSystemEnter();
+  t = getSeconds() - t;
+  std::cout << t * 1000. << " ms" << std::endl;
   TaskingSystemEnd();
 END_UTEST(TestAllocator)
 
@@ -281,6 +287,7 @@ public:
 START_UTEST(TestFullQueue)
   Atomic counter(0u);
   TaskingSystemStart();
+  double t = getSeconds();
   Task *done = PF_NEW(DoneTask);
   for (size_t i = 0; i < 64; ++i) {
     Task *task = PF_NEW(FullTask, "FullTask", counter);
@@ -289,6 +296,8 @@ START_UTEST(TestFullQueue)
   }
   done->scheduled();
   TaskingSystemEnter();
+  t = getSeconds() - t;
+  std::cout << t * 1000. << " ms" << std::endl;
   TaskingSystemEnd();
   FATAL_IF (counter != 64 * FullTask::taskToSpawn, "TestFullQueue failed");
 END_UTEST(TestFullQueue)
@@ -324,6 +333,7 @@ START_UTEST(TestAffinity)
   Atomic counter(0u);
   TaskingSystemStart();
   enum { batchNum = 128 };
+  double t = getSeconds();
   Task *done = PF_NEW(DoneTask);
   for (size_t i = 0; i < batchNum; ++i) {
     Task *task = PF_NEW(AffinityTask, done, counter, 0);
@@ -332,6 +342,8 @@ START_UTEST(TestAffinity)
   }
   done->scheduled();
   TaskingSystemEnter();
+  t = getSeconds() - t;
+  std::cout << t * 1000. << " ms" << std::endl;
   TaskingSystemEnd();
   FATAL_IF (counter != batchNum * AffinityTask::taskToSpawn, "TestAffinity failed");
 END_UTEST(TestAffinity)
@@ -400,12 +412,15 @@ START_UTEST(TestFibo)
   {
     const uint64 rank = 32;
     uint64 sum;
+    double t = getSeconds();
     Ref<FiboSpawnTask> fibo = PF_NEW(FiboSpawnTask, rank, &sum);
     Task *done = PF_NEW(DoneTask);
     fibo->starts(done);
     fibo->scheduled();
     done->scheduled();
     TaskingSystemEnter();
+    t = getSeconds() - t;
+    std::cout << t * 1000. << " ms" << std::endl;
     std::cout << "Fibonacci Task Num: "<< fiboNum << std::endl;
     FATAL_IF (sum != fiboLinear(rank), "TestFibonacci failed");
   }
@@ -449,12 +464,15 @@ START_UTEST(TestFiboWithWait)
   {
     const uint64 rank = 32;
     uint64 sum;
+    double t = getSeconds();
     Ref<FiboWithWaitTask> fibo = PF_NEW(FiboWithWaitTask, rank, &sum);
     Task *done = PF_NEW(DoneTask);
     fibo->starts(done);
     fibo->scheduled();
     done->scheduled();
     TaskingSystemEnter();
+    t = getSeconds() - t;
+    std::cout << t * 1000. << " ms" << std::endl;
     std::cout << "Fibonacci Task Num: "<< fiboNum << std::endl;
     FATAL_IF (sum != fiboLinear(rank), "TestFibonacci (with wait) failed");
   }
@@ -463,8 +481,8 @@ END_UTEST(TestFiboWithWaitTask)
 
 int main(int argc, char **argv)
 {
-  std::cout << sizeof(Task) << std::endl;
-  startMemoryDebugger();
+//  std::cout << sizeof(Task) << std::endl;
+  MemDebuggerStart();
   TestDummy();
   TestTree<NodeTaskOpt>();
   TestTree<NodeTask>();
@@ -476,8 +494,8 @@ int main(int argc, char **argv)
   TestAffinity();
   TestFibo();
   TestFiboWithWait();
-  dumpAlloc();
-  endMemoryDebugger();
+  MemDebuggerDumpAlloc();
+  MemDebuggerEnd();
   return 0;
 }
 
