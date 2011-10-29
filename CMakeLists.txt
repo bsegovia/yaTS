@@ -19,9 +19,6 @@ else (PF_DEBUG_MEMORY)
   set (PF_DEBUG_MEMORY_FLAG "${DEF}PF_DEBUG_MEMORY=0")
 endif (PF_DEBUG_MEMORY)
 
-if (PF_VERBOSE_VECTORIZER)
-endif (PF_VERBOSE_VECTORIZER)
-
 if (UNIX)
   if (PF_VERBOSE_VECTORIZER)
     set (COMMON_FLAGS "-ftree-vectorizer-verbose=2")
