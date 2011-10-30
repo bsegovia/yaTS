@@ -243,8 +243,19 @@ namespace pf {
     Atomic elemNum;          //!< Number of outstanding elements
   };
 
-  /*! Mandatory before creating and running any task (MAIN THREAD) */
-  void TaskingSystemStart(void);
+  /*! A task that runs on the main thread */
+  class TaskMain : public Task
+  {
+  public:
+    INLINE TaskMain(const char *name) : Task(name) {
+      this->setAffinity(PF_TASK_MAIN_THREAD);
+    }
+  };
+
+  /*! Mandatory before creating and running any task. If workerNum < 0, the
+   *  number of hardware threads minus 1 is chosen (MAIN THREAD)
+   */
+  void TaskingSystemStart(int workerNum = -1);
 
   /*! Make the main thread enter the tasking system (MAIN THREAD) */
   void TaskingSystemEnd(void);
