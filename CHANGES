@@ -4,6 +4,8 @@ yaTS 1.0.2
 - Implemented a clean and reactive way to yield threads when there is nothing
   to do
 - Added proper load_acquire and store_release semantics
+- Fixed a completely uber-stupid race condition in the code. Should be cool for
+  me to learn how to use atomic and volatile variables... What a shame.
 
 yaTS 1.0.1
 - Fixed a possible race condition in the debug code

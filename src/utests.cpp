@@ -410,9 +410,10 @@ static uint64 fiboLinear(uint64 rank)
 START_UTEST(TestFibo)
   TaskingSystemStart();
   {
-    const uint64 rank = 32;
+    const uint64 rank = 2;//rand() % 32;
     uint64 sum;
     double t = getSeconds();
+    fiboNum = 0u;
     Ref<FiboSpawnTask> fibo = PF_NEW(FiboSpawnTask, rank, &sum);
     Task *done = PF_NEW(DoneTask);
     fibo->starts(done);
@@ -462,9 +463,10 @@ Task *FiboWithWaitTask::run(void) {
 START_UTEST(TestFiboWithWait)
   TaskingSystemStart();
   {
-    const uint64 rank = 32;
+    const uint64 rank = rand() % 32;
     uint64 sum;
     double t = getSeconds();
+    fiboNum = 0u;
     Ref<FiboWithWaitTask> fibo = PF_NEW(FiboWithWaitTask, rank, &sum);
     Task *done = PF_NEW(DoneTask);
     fibo->starts(done);
@@ -481,21 +483,22 @@ END_UTEST(TestFiboWithWaitTask)
 
 int main(int argc, char **argv)
 {
-//  std::cout << sizeof(Task) << std::endl;
-  MemDebuggerStart();
-  TestDummy();
-  TestTree<NodeTaskOpt>();
-  TestTree<NodeTask>();
-  TestTree<CascadeNodeTaskOpt>();
-  TestTree<CascadeNodeTask>();
-  TestTaskSet();
-  TestAllocator();
-  TestFullQueue();
-  TestAffinity();
-  TestFibo();
-  TestFiboWithWait();
-  MemDebuggerDumpAlloc();
-  MemDebuggerEnd();
+  for (;;) {
+    MemDebuggerStart();
+    TestDummy();
+    TestTree<NodeTaskOpt>();
+    TestTree<NodeTask>();
+    TestTree<CascadeNodeTaskOpt>();
+    TestTree<CascadeNodeTask>();
+    TestTaskSet();
+    TestAllocator();
+    TestFullQueue();
+    TestAffinity();
+    TestFibo();
+    TestFiboWithWait();
+    MemDebuggerDumpAlloc();
+    MemDebuggerEnd();
+  }
   return 0;
 }
 

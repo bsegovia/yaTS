@@ -79,7 +79,7 @@ namespace pf
     }
 
   protected:
-    Task * tasks[TaskPriority::NUM][elemNum]; //!< All tasks currently stored
+    Task * volatile tasks[TaskPriority::NUM][elemNum]; //!< All tasks currently stored
     MutexActive mutex;                        //!< Not lock-free right now
     union {
       INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
@@ -724,15 +724,12 @@ namespace pf
 
       // Explore the completions and runs all continuations if any
       do {
-        const atomic_t stillRunning = --task->toEnd;
-
         // We are done here
-        if (stillRunning == 0) {
+        if (--task->toEnd == 0) {
           __store_release(&task->state, uint8(TaskState::DONE));
           // Start the tasks if they become ready
           if (task->toBeStarted) {
-            task->toBeStarted->toStart--;
-            if (task->toBeStarted->toStart == 0)
+            if (--task->toBeStarted->toStart == 0)
               this->schedule(*task->toBeStarted);
           }
           // Traverse all completions to signal we are done
@@ -773,8 +770,7 @@ namespace pf
 
   void Task::scheduled(void) {
     __store_release(&this->state, uint8(TaskState::SCHEDULED));
-    this->toStart--;
-    if (this->toStart == 0) scheduler->schedule(*this);
+    if (--this->toStart == 0) scheduler->schedule(*this);
   }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
