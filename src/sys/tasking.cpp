@@ -36,8 +36,8 @@
 #define IF_TASK_STATISTICS(EXPR)
 #endif
 
-namespace pf {
-
+namespace pf
+{
   ///////////////////////////////////////////////////////////////////////////
   /// Declaration of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
@@ -147,15 +147,18 @@ namespace pf {
 
   /*! We will switch off the thread if nothing can be run */
   enum TaskThreadState {
-    SLEEPING = 0,
-    RUNNING  = 1,
-    INVALID_THREAD_STATE = 0xffffffff
+    TASK_THREAD_STATE_SLEEPING = 0,
+    TASK_THREAD_STATE_RUNNING  = 1,
+	TASK_THREAD_STATE_DEAD     = 2,
+    TASK_THREAD_STATE_INVALID  = 0xffffffff
   };
 
   /*! Per thread state required to run the tasking system */
   class TaskThread {
   public:
     TaskThread(void);
+    /*! Tell the thread it has to return */
+    INLINE void die(void);
     /*! Resume the thread execution */
     INLINE void wakeUp(void);
     /*! Check without locking the state before waking up the threads */
@@ -186,18 +189,15 @@ namespace pf {
     ~TaskScheduler(void);
 
     /*! Call by the main thread to enter the tasking system */
-    template <bool isMainThread> void go(void);
+    void go(void);
     /*! Interrupt all threads */
     INLINE void stopAll(void) {
-      __store_release(&deadMain, true);
-      __store_release(&dead, true);
       for (uint32 i = 0; i < this->queueNum; ++i)
-        this->taskThread[i].wakeUp();
+        this->taskThread[i].die();
     }
     /*! Interrupt main thread only */
     INLINE void stopMain(void) {
-      __store_release(&deadMain, true);
-      this->taskThread[PF_TASK_MAIN_THREAD].wakeUp();
+      this->taskThread[PF_TASK_MAIN_THREAD].die();
     }
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getWorkerNum(void) { return uint32(this->workerNum); }
@@ -218,7 +218,7 @@ namespace pf {
   private:
 
     /*! Function run by each thread */
-    template <bool isMainThread> static void threadFunction(ThreadStartup *thread);
+    static void threadFunction(ThreadStartup *thread);
     /*! Schedule a task which is now ready to execute */
     INLINE void schedule(Task &task);
     /*! Try to push a task in the queue. Returns false if queues are full */
@@ -231,8 +231,6 @@ namespace pf {
     TaskThread *taskThread;       //!< Per thread state
     size_t workerNum;             //!< Total number of threads running
     size_t queueNum;              //!< Number of queues (should be workerNum+1)
-    volatile bool dead;           //!< The tasking system should quit
-    volatile bool deadMain;       //!< The main thread should return
   };
 
   /*! Allocator per thread */
@@ -473,29 +471,35 @@ namespace pf {
     this->chunk[chunkID] = pred;
   }
 
-  TaskThread::TaskThread(void) : victim(0), toWakeUp(0) {}
+  TaskThread::TaskThread(void) : state(TASK_THREAD_STATE_RUNNING), victim(0), toWakeUp(0) {}
 
   void TaskThread::sleep(void) {
     Lock<MutexSys> lock(mutex);
     // Double check that we did not get anything to run in the mean time
-    if (afQueue.getActiveMask() || wsQueue.getActiveMask())
-      return;
-    state = SLEEPING;
-    while (state == SLEEPING)
+    if (afQueue.getActiveMask() || wsQueue.getActiveMask()) return;
+	if (state == TASK_THREAD_STATE_DEAD) return;
+    state = TASK_THREAD_STATE_SLEEPING;
+    while (state == TASK_THREAD_STATE_SLEEPING)
       cond.wait(mutex);
   }
 
   void TaskThread::wakeUp(void) {
     Lock<MutexSys> lock(mutex);
-    if (state == SLEEPING) {
-      state = RUNNING;
+    if (state == TASK_THREAD_STATE_SLEEPING) {
+      state = TASK_THREAD_STATE_RUNNING;
       cond.broadcast();
     }
   }
 
   void TaskThread::tryWakeUp(void) {
-    if (state == RUNNING) return;
+    if (state != TASK_THREAD_STATE_SLEEPING) return;
     this->wakeUp();
+  }
+  
+  void TaskThread::die(void) {
+    Lock<MutexSys> lock(mutex);
+    state = TASK_THREAD_STATE_DEAD;
+    cond.broadcast();
   }
 
   void TaskStorage::pushGlobal(uint32 chunkID) {
@@ -581,7 +585,6 @@ namespace pf {
   template <typename T> INLINE T _min(T x, T y) {return x<y?x:y;}
   template <typename T> INLINE T _max(T x, T y) {return x>y?x:y;}
 
-  template <bool isMainThread>
   void TaskScheduler::threadFunction(TaskScheduler::ThreadStartup *thread)
   {
     threadID = uint32(thread->tid);
@@ -590,10 +593,8 @@ namespace pf {
     const int maxInactivityNum = (This->getWorkerNum()+1) * PF_TASK_TRIES_BEFORE_YIELD;
     int inactivityNum = 0;
 
-#if defined(__SSE__)
-    // flush to zero and no denormals
+	// flush to zero and no denormals
     _mm_setcsr(_mm_getcsr() | /*FTZ:*/ (1<<15) | /*DAZ:*/ (1<<6));
-#endif /* __SSE__ */
 
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
@@ -603,13 +604,8 @@ namespace pf {
         This->runTask(task);
         inactivityNum = 0;
       } else
-        inactivityNum++;
-      bool isDead;
-      if (isMainThread)
-        isDead = __load_acquire(&This->deadMain);
-      else
-        isDead = __load_acquire(&This->dead);
-      if (UNLIKELY(isDead)) break;
+        inactivityNum++; 
+      if (UNLIKELY(myself.state == TASK_THREAD_STATE_DEAD)) break;
       if (UNLIKELY(inactivityNum >= maxInactivityNum)) {
         inactivityNum = 0;
         myself.sleep();
@@ -617,13 +613,8 @@ namespace pf {
     }
     PF_DELETE(thread);
   }
-
-  // Explicitely instantiate both versions of the function
-  template void TaskScheduler::threadFunction<false>(TaskScheduler::ThreadStartup*);
-  template void TaskScheduler::threadFunction<true>(TaskScheduler::ThreadStartup*);
-
-  TaskScheduler::TaskScheduler(int workerNum_) :
-    taskThread(NULL), dead(false), deadMain(false)
+ 
+  TaskScheduler::TaskScheduler(int workerNum_) : taskThread(NULL)
   {
     if (workerNum_ < 0) workerNum_ = getNumberOfLogicalThreads() - 1;
     this->workerNum = workerNum_;
@@ -639,8 +630,7 @@ namespace pf {
       for (size_t i = 0; i < workerNum; ++i) {
         const int affinity = int(i+1);
         ThreadStartup *thread = PF_NEW(ThreadStartup,i+1,*this);
-        thread_func threadFunc = (thread_func) threadFunction<false>;
-        this->taskThread[i+1].thread = createThread(threadFunc, thread, stackSize, affinity);
+		this->taskThread[i+1].thread = createThread((pf::thread_func) threadFunction, thread, stackSize, affinity);
       }
     }
   }
@@ -773,10 +763,9 @@ namespace pf {
     } while (task);
   }
 
-  template<bool isMainThread>
   void TaskScheduler::go(void) {
     ThreadStartup *thread = PF_NEW(ThreadStartup, 0, *this);
-    threadFunction<isMainThread>(thread);
+    threadFunction(thread);
   }
 
   static TaskScheduler *scheduler = NULL;
@@ -852,7 +841,7 @@ namespace pf {
 
   void TaskingSystemEnter(void) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
-    scheduler->go<true>();
+    scheduler->go();
   }
 
   void TaskingSystemInterruptMain(void) {
