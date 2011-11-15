@@ -1,3 +1,10 @@
+yaTS 1.0.2
+- Changed priority order. Now affinity and work stealing queue priorities are
+  interleaved
+- Implemented a clean and reactive way to yield threads when there is nothing
+  to do
+- Added proper load_acquire and store_release semantics
+
 yaTS 1.0.1
 - Fixed a possible race condition in the debug code
 - Fixed a very stupid performance bug which leads the thread to sleep all the
