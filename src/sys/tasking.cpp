@@ -23,6 +23,7 @@
 
 #include <vector>
 #include <cstdlib>
+#include <emmintrin.h>
 
 // One important remark about reference counting. Tasks are referenced
 // counted but we do not use Ref<Task> here. This is for performance reasons.
@@ -59,11 +60,16 @@ namespace pf {
      *  Since we properly sort priorities from 0 to 3, using bit scan forward
      *  will return the first non-empty queue with the highest priority
      */
-    INLINE int getActiveMask(void) const {
+    NOINLINE int getActiveMask(void) const {
 #if defined(__WIN32__)
+      // Unfortunately, VS does not support volatile __m128 variables     
       PF_COMPILER_READ_WRITE_BARRIER;
-      const __m128i t = *(__m128i *) (&tail.v);
-      const __m128i h = *(__m128i *) (&head.v);
+      __m128i t, h;
+      t.m128i_i64[0] = tail.v.m128i_i64[0];
+	  h.m128i_i64[0] = head.v.m128i_i64[0];
+	  t.m128i_i64[1] = tail.v.m128i_i64[1];
+	  h.m128i_i64[1] = head.v.m128i_i64[1];
+      PF_COMPILER_READ_WRITE_BARRIER;
 #else
       const __m128i t = __load_acquire(&tail.v);
       const __m128i h = __load_acquire(&head.v);
@@ -412,7 +418,7 @@ namespace pf {
     uint32 chunkNum = 0;
     for (size_t i = 0; i < threadNum; ++i) {
       this->local[i].printStats();
-      chunkNum += this->local[i].statNewChunkNum;
+      chunkNum += uint32(this->local[i].statNewChunkNum);
     }
     std::cout << "Total Memory for Tasks: "
               << double(chunkNum * TaskStorage::chunkSize) / 1024
