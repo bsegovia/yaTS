@@ -62,13 +62,13 @@ namespace pf
      */
     NOINLINE int getActiveMask(void) const {
 #if defined(__WIN32__)
-      // Unfortunately, VS does not support volatile __m128 variables     
+      // Unfortunately, VS does not support volatile __m128 variables
       PF_COMPILER_READ_WRITE_BARRIER;
       __m128i t, h;
       t.m128i_i64[0] = tail.v.m128i_i64[0];
-	  h.m128i_i64[0] = head.v.m128i_i64[0];
-	  t.m128i_i64[1] = tail.v.m128i_i64[1];
-	  h.m128i_i64[1] = head.v.m128i_i64[1];
+      h.m128i_i64[0] = head.v.m128i_i64[0];
+      t.m128i_i64[1] = tail.v.m128i_i64[1];
+      h.m128i_i64[1] = head.v.m128i_i64[1];
       PF_COMPILER_READ_WRITE_BARRIER;
 #else
       const __m128i t = __load_acquire(&tail.v);
@@ -149,12 +149,12 @@ namespace pf
   enum TaskThreadState {
     TASK_THREAD_STATE_SLEEPING = 0,
     TASK_THREAD_STATE_RUNNING  = 1,
-	TASK_THREAD_STATE_DEAD     = 2,
+    TASK_THREAD_STATE_DEAD     = 2,
     TASK_THREAD_STATE_INVALID  = 0xffffffff
   };
 
   /*! Per thread state required to run the tasking system */
-  class TaskThread {
+  class CACHE_LINE_ALIGNED TaskThread {
   public:
     TaskThread(void);
     /*! Tell the thread it has to return */
@@ -174,6 +174,7 @@ namespace pf
     volatile TaskThreadState state; //!< SLEEPING or RUNNING?
     uint32 victim;                  //!< Next thread to steal from
     uint32 toWakeUp;                //!< Next guy to wake up
+    ALIGNED_CLASS
   };
 
   /*! Handle the scheduling of all tasks. We basically implement here a
@@ -477,7 +478,7 @@ namespace pf
     Lock<MutexSys> lock(mutex);
     // Double check that we did not get anything to run in the mean time
     if (afQueue.getActiveMask() || wsQueue.getActiveMask()) return;
-	if (state == TASK_THREAD_STATE_DEAD) return;
+    if (state == TASK_THREAD_STATE_DEAD) return;
     state = TASK_THREAD_STATE_SLEEPING;
     while (state == TASK_THREAD_STATE_SLEEPING)
       cond.wait(mutex);
@@ -593,8 +594,8 @@ namespace pf
     const int maxInactivityNum = (This->getWorkerNum()+1) * PF_TASK_TRIES_BEFORE_YIELD;
     int inactivityNum = 0;
 
-	// flush to zero and no denormals
-    _mm_setcsr(_mm_getcsr() | /*FTZ:*/ (1<<15) | /*DAZ:*/ (1<<6));
+    // flush to zero and no denormals
+    _mm_setcsr(_mm_getcsr() | (1<<15) | (1<<6));
 
     // We try to pick up a task from our queue and then we try to steal a task
     // from other queues
@@ -630,7 +631,7 @@ namespace pf
       for (size_t i = 0; i < workerNum; ++i) {
         const int affinity = int(i+1);
         ThreadStartup *thread = PF_NEW(ThreadStartup,i+1,*this);
-		this->taskThread[i+1].thread = createThread((pf::thread_func) threadFunction, thread, stackSize, affinity);
+        this->taskThread[i+1].thread = createThread((pf::thread_func) threadFunction, thread, stackSize, affinity);
       }
     }
   }
@@ -803,7 +804,12 @@ namespace pf
         this->toEnd--;
         this->refDec();
       }
-      while ((curr = --this->elemNum) >= 0) this->run(curr);
+      while ((curr = --this->elemNum) >= 0) {
+        this->run(curr);
+        TaskThread &myself = scheduler->taskThread[scheduler->threadID];
+        scheduler->taskThread[myself.toWakeUp].tryWakeUp();
+        myself.toWakeUp = (myself.toWakeUp + 1) % scheduler->queueNum;
+      }
     } else if (this->elemNum > 1) {
       this->toEnd++;
       this->refInc(); // One more reference in the scheduler
@@ -823,6 +829,8 @@ namespace pf
 
   void TaskingSystemStart(int32 workerNum) {
     FATAL_IF (scheduler != NULL, "scheduler is already running");
+    // flush to zero and no denormals
+    _mm_setcsr(_mm_getcsr() | (1<<15) | (1<<6));
     scheduler = PF_NEW(TaskScheduler, workerNum);
     allocator = PF_NEW(TaskAllocator, scheduler->getWorkerNum()+1);
   }

@@ -134,7 +134,7 @@
 #define PF_TASK_STATICTICS 0
 
 /*! Give number of tries before yielding (multiplied by number of threads) */
-#define PF_TASK_TRIES_BEFORE_YIELD 256
+#define PF_TASK_TRIES_BEFORE_YIELD 8
 
 /*! Main thread (the one that the system gives us) is always 0 */
 #define PF_TASK_MAIN_THREAD 0
@@ -142,9 +142,8 @@
 /*! No affinity means that the task can rn anywhere */
 #define PF_TASK_NO_AFFINITY 0xffffu
 
-/*! Maximum time the thread is yielded */
-namespace pf {
-
+namespace pf
+{
   /*! A task with a higher priority will be preferred to a task with a lower
    *  priority. Note that the system does not completely comply with
    *  priorities. Basically, because the system is distributed, it is possible
