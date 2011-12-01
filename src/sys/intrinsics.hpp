@@ -21,7 +21,7 @@
 #include <xmmintrin.h>
 #include <emmintrin.h>
 
-#if defined(__WIN32__)
+#if defined(__MSVC__)
 
 #include <intrin.h>
 
@@ -185,7 +185,7 @@ INLINE int32 atomic_cmpxchg(int32 volatile* value, const int32 input, int32 comp
 #define PF_COMPILER_WRITE_BARRIER         PF_COMPILER_READ_WRITE_BARRIER
 #define PF_COMPILER_READ_BARRIER          PF_COMPILER_READ_WRITE_BARRIER
 
-#endif /* __WIN32__ */
+#endif /* __MSVC__ */
 
 template <typename T>
 INLINE T __load_acquire(volatile T *ptr)

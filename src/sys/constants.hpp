@@ -48,7 +48,7 @@ namespace pf
     INLINE operator uint16( ) const { return 0; }
     INLINE operator int8  ( ) const { return 0; }
     INLINE operator uint8 ( ) const { return 0; }
-#ifndef _WIN32
+#ifndef __MSVC__
     INLINE operator size_t( ) const { return 0; }
 #endif
 
@@ -66,7 +66,7 @@ namespace pf
     INLINE operator uint16( ) const { return 1; }
     INLINE operator int8  ( ) const { return 1; }
     INLINE operator uint8 ( ) const { return 1; }
-#ifndef _WIN32
+#ifndef __MSVC__
     INLINE operator size_t( ) const { return 1; }
 #endif
   } one MAYBE_UNUSED;
@@ -83,7 +83,7 @@ namespace pf
     INLINE operator uint16( ) const { return std::numeric_limits<uint16>::min(); }
     INLINE operator int8  ( ) const { return std::numeric_limits<int8>::min(); }
     INLINE operator uint8 ( ) const { return std::numeric_limits<uint8>::min(); }
-#ifndef _WIN32
+#ifndef __MSVC__
     INLINE operator size_t( ) const { return std::numeric_limits<size_t>::min(); }
 #endif
 
