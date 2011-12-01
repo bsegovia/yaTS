@@ -17,6 +17,9 @@
 #include "sys/condition.hpp"
 
 #if defined(__WIN32__)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #if defined(__GNUC__)
 
 namespace pf
@@ -42,10 +45,10 @@ namespace pf
   ConditionSys::ConditionSys ()
   {
     cond = (Mingw32Cond *) PF_NEW(Mingw32Cond);
-    cond->waiters_count = 0;
-    cond->events[MINGW32_COND_SIGNAL]    = CreateEvent(NULL, FALSE, FALSE, NULL);
-    cond->events[MINGW32_COND_BROADCAST] = CreateEvent(NULL, TRUE, FALSE, NULL);
-    InitializeCriticalSection(&cond->waiters_count_lock);
+    ((Mingw32Cond *)cond)->waiters_count = 0;
+    ((Mingw32Cond *)cond)->events[MINGW32_COND_SIGNAL]    = CreateEvent(NULL, FALSE, FALSE, NULL);
+    ((Mingw32Cond *)cond)->events[MINGW32_COND_BROADCAST] = CreateEvent(NULL, TRUE, FALSE, NULL);
+    InitializeCriticalSection(&((Mingw32Cond *)cond)->waiters_count_lock);
   }
 
   ConditionSys::~ConditionSys ()
@@ -107,10 +110,8 @@ namespace pf
     if (have_waiters)
       SetEvent(cv->events[MINGW32_COND_BROADCAST]);
   }
-
+} /* namespace pf */
 #else
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 namespace pf
 {
