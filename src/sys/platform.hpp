@@ -16,23 +16,48 @@
 
 #ifndef __PF_PLATFORM_HPP__
 #define __PF_PLATFORM_HPP__
-
 #include <cstddef>
 #include <cstdlib>
 #include <cstdio>
-#include <memory>
-#include <stdexcept>
 #include <iostream>
 #include <cassert>
 
 ////////////////////////////////////////////////////////////////////////////////
-/// detect platform
+/// CPU architecture
 ////////////////////////////////////////////////////////////////////////////////
 
 /* detect 32 or 64 platform */
 #if defined(__x86_64__) || defined(__ia64__) || defined(_M_X64)
 #define __X86_64__
+#else
+#define __X86__
 #endif
+
+/* We require SSE ... */
+#ifndef __SSE__
+#define __SSE__
+#endif
+
+/* ... and SSE2 */
+#ifndef __SSE2__
+#define __SSE2__
+#endif
+
+#if defined(_INCLUDED_IMM)
+// #define __AVX__
+#endif
+
+#if defined(_MSC_VER) && (_MSC_VER < 1600) && !defined(__INTEL_COMPILER) || defined(_DEBUG) && defined(_WIN32)
+#define __NO_AVX__
+#endif
+
+#if defined(_MSC_VER) && !defined(__SSE4_2__)
+// #define __SSE4_2__  //! activates SSE4.2 support
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
+/// Operating system
+////////////////////////////////////////////////////////////////////////////////
 
 /* detect Linux platform */
 #if defined(linux) || defined(__linux__) || defined(__LINUX__)
@@ -85,16 +110,23 @@
 #  endif
 #endif
 
-#if defined(_INCLUDED_IMM)
-#define __AVX__
+////////////////////////////////////////////////////////////////////////////////
+/// Compiler
+////////////////////////////////////////////////////////////////////////////////
+
+/*! GCC compiler */
+#ifdef __GNUC__
+// #define __GNUC__
 #endif
 
-#if defined(_MSC_VER) && (_MSC_VER < 1600) && !defined(__INTEL_COMPILER) || defined(_DEBUG) && defined(_WIN32)
-#define __NO_AVX__
+/*! Intel compiler */
+#ifdef __INTEL_COMPILER
+#define __ICC__
 #endif
 
-#if defined(_MSC_VER) && !defined(__SSE4_2__)
-#define __SSE4_2__  //! activates SSE4.2 support
+/*! Visual C compiler */
+#ifdef _MSC_VER
+#define __MSVC__
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -144,62 +176,67 @@
 #define __builtin_expect(expr,b) expr
 #endif
 
-/* Debug syntactic sugar */
+/*! Debug syntactic sugar */
 #ifdef NDEBUG
 #define IF_DEBUG(EXPR)
 #else
 #define IF_DEBUG(EXPR) EXPR
 #endif /* NDEBUG */
 
-/* Debug printing macros */
+/*! Debug printing macros */
 #define STRING(x) #x
 #define PING std::cout << __FILE__ << " (" << __LINE__ << "): " << __FUNCTION__ << std::endl
 #define PRINT(x) std::cout << STRING(x) << " = " << (x) << std::endl
 
-/* Branch hint */
+/*! Branch hint */
 #define LIKELY(x)       __builtin_expect((x),1)
 #define UNLIKELY(x)     __builtin_expect((x),0)
 
-/* Stringify macros */
+/*! Stringify macros */
 #define JOIN(X, Y) _DO_JOIN(X, Y)
 #define _DO_JOIN(X, Y) _DO_JOIN2(X, Y)
 #define _DO_JOIN2(X, Y) X##Y
 
-/* Fatal error macros */
+/*! Compile-time assertion */
+#define STATIC_ASSERT(value)                                     \
+  struct JOIN(__,JOIN(__,__LINE__)) { int x[(value) ? 1 : -1]; }
+
+/*! Fatal error macros */
 #if defined(__WIN32__)
-namespace pf { void fatalBox(const char*); }
-#define FATAL(...)                                           \
-do {                                                         \
-  char msg[1024];                                            \
-  _snprintf_s(msg, sizeof(msg), _countof(msg), __VA_ARGS__); \
-  pf::fatalBox(msg);                                         \
-  fprintf(stderr, "error: ");                                \
-  fprintf(stderr, __VA_ARGS__);                              \
-  fprintf(stderr, "\n");                                     \
-  fflush(stderr); assert(false); _exit(-1);                  \
+namespace pf
+{
+  void Win32Fatal(const std::string&);
+} /* namespace pf */
+
+#define FATAL(MSG)                                   \
+do {                                                 \
+  std::cerr << MSG << std::endl;                     \
+  pf::Win32Fatal(MSG);                               \
+  assert(0); _exit(-1);                              \
 } while (0)
 #else
-#define FATAL(...)                                           \
-do {                                                         \
-  fprintf(stderr, "error: ");                                \
-  fprintf(stderr, __VA_ARGS__);                              \
-  fprintf(stderr, "\n");                                     \
-  fflush(stderr); assert(0); _exit(-1);                      \
+#define FATAL(MSG)                                   \
+do {                                                 \
+  std::cerr << MSG << std::endl;                     \
+  assert(0); _exit(-1);                              \
 } while (0)
 #endif /* __WIN32__ */
 
 #define NOT_IMPLEMENTED FATAL ("Not implemented")
-#define FATAL_IF(COND, ...)                                  \
-do {                                                         \
-  if(UNLIKELY(COND)) FATAL(__VA_ARGS__);                     \
+#define FATAL_IF(COND, MSG)                          \
+do {                                                 \
+  if(UNLIKELY(COND)) FATAL(MSG);                     \
 } while (0)
 
 /* Safe deletion macros */
 #define PF_SAFE_DELETE_ARRAY(x) do { if (x != NULL) PF_DELETE_ARRAY(x); } while (0)
 #define PF_SAFE_DELETE(x) do { if (x != NULL) PF_DELETE(x); } while (0)
 
-/* Various helper macros */
+/* Number of elements in an array */
 #define ARRAY_ELEM_NUM(x) (sizeof(x) / sizeof(x[0]))
+
+/* Align X on A */
+#define ALIGN(X,A) (((X) % (A)) ? ((X) + (A) - ((X) % (A))) : (X))
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Basic Types
@@ -235,7 +272,7 @@ typedef int32 index_t;
 /// Disable some compiler warnings
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(__INTEL_COMPILER)
+#ifdef __ICC__
 #pragma warning(disable:265)  // floating-point operation result is out of range
 #pragma warning(disable:383)  // value copied to temporary, reference to temporary used
 #pragma warning(disable:869)  // parameter was never referenced
@@ -243,7 +280,8 @@ typedef int32 index_t;
 #pragma warning(disable:1418) // external function definition with no prior declaration
 #pragma warning(disable:1419) // external declaration in primary source file
 #pragma warning(disable:1572) // floating-point equality and inequality comparisons are unreliable
-#endif
+#pragma warning(disable:1125) // virtual function override intended?
+#endif /* __ICC__ */
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Default Includes and Functions
@@ -276,8 +314,8 @@ namespace pf
     return r;
   }
 
-  template<uint32 N> INLINE uint32
-  isPowerOf(uint32 i) {
+  template<uint32 N>
+  INLINE uint32 isPowerOf(uint32 i) {
     while (i > 1) {
       if (i%N) return false;
       i = i/N;
@@ -287,12 +325,15 @@ namespace pf
 
   template<> INLINE uint32 isPowerOf<2>(uint32 i) { return ((i-1)&i) == 0; }
 
-#define ALIGNED_CLASS                                               \
-public:                                                             \
+#define ALIGNED_STRUCT                                              \
   void* operator new(size_t size) { return alignedMalloc(size); }   \
   void operator delete(void* ptr) { alignedFree(ptr); }             \
   void* operator new[](size_t size) { return alignedMalloc(size); } \
   void operator delete[](void* ptr) { alignedFree(ptr); }           \
+
+#define ALIGNED_CLASS                                               \
+public:                                                             \
+  ALIGNED_STRUCT                                                    \
 private:
 
   /*! random functions */
@@ -304,6 +345,8 @@ private:
 
   /** returns performance counter in seconds */
   double getSeconds();
-}
 
-#endif
+} /* namespace pf */
+
+#endif /* __PF_PLATFORM_HPP__ */
+
