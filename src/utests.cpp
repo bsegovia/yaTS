@@ -329,23 +329,32 @@ public:
   int lvl;
 };
 
+class DoneTaskMain : public Task {
+public:
+  virtual Task* run(void) { TaskingSystemInterruptMain(); return NULL; }
+};
+
 START_UTEST(TestAffinity)
-  Atomic counter(0u);
   TaskingSystemStart();
   enum { batchNum = 128 };
-  double t = getSeconds();
-  Task *done = PF_NEW(DoneTask);
-  for (size_t i = 0; i < batchNum; ++i) {
-    Task *task = PF_NEW(AffinityTask, done, counter, 0);
-    task->starts(done);
-    task->scheduled();
+  for (int i = 0; i < 1; ++i) {
+    Atomic counter(0u);
+    double t = getSeconds();
+    Ref<Task> done = PF_NEW(DoneTaskMain);
+    for (size_t i = 0; i < batchNum; ++i) {
+      Task *task = PF_NEW(AffinityTask, done.ptr, counter);
+      task->starts(done.ptr);
+      task->scheduled();
+    }
+    done->scheduled();
+    done->waitForCompletion();
+    //TaskingSystemEnter();
+    t = getSeconds() - t;
+    std::cout << t * 1000. << " ms" << std::endl;
+    std::cout << counter << std::endl;
+    FATAL_IF (counter != batchNum * AffinityTask::taskToSpawn, "TestAffinity failed");
   }
-  done->scheduled();
-  TaskingSystemEnter();
-  t = getSeconds() - t;
-  std::cout << t * 1000. << " ms" << std::endl;
   TaskingSystemEnd();
-  FATAL_IF (counter != batchNum * AffinityTask::taskToSpawn, "TestAffinity failed");
 END_UTEST(TestAffinity)
 
 ///////////////////////////////////////////////////////////////////////////////
