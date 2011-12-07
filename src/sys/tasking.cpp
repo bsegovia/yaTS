@@ -364,7 +364,7 @@ namespace pf
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::get(void) {
     if (this->getActiveMask() == 0) return NULL;
-    Lock<MutexType> lock(this->mutex);
+    Lock<typename TaskQueue<elemNum>::MutexType> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const uint32 prio = __bsf(mask);
@@ -379,7 +379,7 @@ namespace pf
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::steal(void) {
     if (this->getActiveMask() == 0) return NULL;
-    Lock<MutexType> lock(this->mutex);
+    Lock<typename TaskQueue<elemNum>::MutexType> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const uint32 prio = __bsf(mask);
@@ -396,7 +396,7 @@ namespace pf
     const uint32 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    Lock<MutexType> lock(this->mutex);
+    Lock<typename TaskQueue<elemNum>::MutexType> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     __store_release(&task.state, uint8(TaskState::READY));

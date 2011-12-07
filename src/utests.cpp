@@ -347,8 +347,8 @@ START_UTEST(TestAffinity)
       task->scheduled();
     }
     done->scheduled();
-    done->waitForCompletion();
-    //TaskingSystemEnter();
+    //done->waitForCompletion();
+    TaskingSystemEnter();
     t = getSeconds() - t;
     std::cout << t * 1000. << " ms" << std::endl;
     std::cout << counter << std::endl;
