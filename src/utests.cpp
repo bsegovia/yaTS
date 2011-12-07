@@ -336,8 +336,8 @@ public:
 
 START_UTEST(TestAffinity)
   TaskingSystemStart();
-  enum { batchNum = 128 };
-  for (int i = 0; i < 1; ++i) {
+  enum { batchNum = 512 };
+  for (int i = 0; i < 1024; ++i) {
     Atomic counter(0u);
     double t = getSeconds();
     Ref<Task> done = PF_NEW(DoneTaskMain);

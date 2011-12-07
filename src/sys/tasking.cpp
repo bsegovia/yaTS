@@ -343,20 +343,23 @@ namespace pf
   /// Implementation of the internal classes of the tasking system
   ///////////////////////////////////////////////////////////////////////////
 
+  // Insertion is only done by the owner of the queues. So, the owner is the
+  // only one that modifies the head (since this is the only one that inserts).
+  // With proper store_releases, we therefore do not need any lock
   template<int elemNum>
   bool TaskWorkStealingQueue<elemNum>::insert(Task &task) {
     const uint32 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     __store_release(&task.state, uint8(TaskState::READY));
-    PF_COMPILER_READ_WRITE_BARRIER;
-    this->tasks[prio][this->head[prio] % elemNum] = &task;
-    PF_COMPILER_READ_WRITE_BARRIER;
-    this->head[prio]++;
+    __store_release(&this->tasks[prio][this->head[prio] % elemNum], &task);
+    const int32 nextHead = this->head[prio] + 1;
+    __store_release(&this->head[prio], nextHead);
     IF_TASK_STATISTICS(statInsertNum++);
     return true;
   }
 
+  // get is competing with steal: we use a lock
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::get(void) {
     if (this->getActiveMask() == 0) return NULL;
@@ -364,12 +367,14 @@ namespace pf
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const uint32 prio = __bsf(mask);
-    const int32 index = --this->head[prio];
+    const int32 index = this->head[prio] - 1;
+    __store_release(&this->head[prio], index);
     Task* task = this->tasks[prio][index % elemNum];
     IF_TASK_STATISTICS(statGetNum++);
     return task;
   }
 
+  // Idem
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::steal(void) {
     if (this->getActiveMask() == 0) return NULL;
@@ -384,31 +389,33 @@ namespace pf
     return stolen;
   }
 
+  // insertion is done by all threads. We use a mutex
   template<int elemNum>
   bool TaskAffinityQueue<elemNum>::insert(Task &task) {
     const uint32 prio = task.getPriority();
-    // No double check here (I mean, before and after the lock. We just take the
-    // optimistic approach ie we suppose the queue is never full)
+    if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
+      return false;
     Lock<MutexActive> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     __store_release(&task.state, uint8(TaskState::READY));
-    PF_COMPILER_READ_WRITE_BARRIER;
-    this->tasks[prio][this->head[prio] % elemNum] = &task;
-    PF_COMPILER_READ_WRITE_BARRIER;
-    this->head[prio]++;
+    __store_release(&this->tasks[prio][this->head[prio] % elemNum], &task);
+    const int32 nextHead = this->head[prio] + 1;
+    __store_release(&this->head[prio], nextHead);
     IF_TASK_STATISTICS(statInsertNum++);
     return true;
   }
 
+  // get is only done by the owner that therefore owns the tail. We use proper
+  // store_release / load_acquire to avoid locks
   template<int elemNum>
   Task* TaskAffinityQueue<elemNum>::get(void) {
     if (this->getActiveMask() == 0) return NULL;
-    Lock<MutexActive> lock(this->mutex);
     const int mask = this->getActiveMask();
     const uint32 prio = __bsf(mask);
-    Task* task = this->tasks[prio][this->tail[prio] % elemNum];
-    this->tail[prio]++;
+    Task* task = __load_acquire(&this->tasks[prio][this->tail[prio] % elemNum]);
+    const int32 nextTail = this->tail[prio] + 1;
+    __store_release(&this->tail[prio], nextTail);
     IF_TASK_STATISTICS(statGetNum++);
     return task;
   }
