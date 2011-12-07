@@ -83,7 +83,7 @@ namespace pf
   protected:
     Task * volatile tasks[TaskPriority::NUM][elemNum]; //!< All tasks currently stored
     typedef MutexActive MutexType;                     //!< Not lock-free right now
-	MutexType mutex;								   
+    MutexType mutex;
     union {
       INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
       volatile int32 x[TaskPriority::NUM];
@@ -846,8 +846,8 @@ namespace pf
 
   void TaskScheduler::go(void) {
     ThreadStartup *thread = PF_NEW(ThreadStartup, PF_TASK_MAIN_THREAD, *this);
-	// Resurrect the main thread if required
-	this->taskThread[PF_TASK_MAIN_THREAD].state = TASK_THREAD_STATE_RUNNING;
+    // Resurrect the main thread if required
+    this->taskThread[PF_TASK_MAIN_THREAD].state = TASK_THREAD_STATE_RUNNING;
     threadFunction(thread);
   }
 
@@ -911,7 +911,7 @@ namespace pf
     static const uint32 bitsPerByte = 8;
     FATAL_IF (workerNum >= int32(sizeof(size_t)*bitsPerByte), "Too many workers are required");
     FATAL_IF (scheduler != NULL, "scheduler is already running");
-	// flush to zero and no denormals
+    // flush to zero and no denormals
     _mm_setcsr(_mm_getcsr() | (1<<15) | (1<<6));
     scheduler = PF_NEW(TaskScheduler, workerNum);
     allocator = PF_NEW(TaskAllocator, scheduler->getWorkerNum()+1);
