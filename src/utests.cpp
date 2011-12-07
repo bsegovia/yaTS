@@ -337,7 +337,7 @@ public:
 START_UTEST(TestAffinity)
   TaskingSystemStart();
   enum { batchNum = 512 };
-  for (int i = 0; i < 1024; ++i) {
+  for (int i = 0; i < 8; ++i) {
     Atomic counter(0u);
     double t = getSeconds();
     Ref<Task> done = PF_NEW(DoneTaskMain);
@@ -419,7 +419,7 @@ static uint64 fiboLinear(uint64 rank)
 START_UTEST(TestFibo)
   TaskingSystemStart();
   {
-    const uint64 rank = 2;//rand() % 32;
+    const uint64 rank = rand() % 32;
     uint64 sum;
     double t = getSeconds();
     fiboNum = 0u;

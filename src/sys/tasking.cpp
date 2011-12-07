@@ -82,7 +82,8 @@ namespace pf
 
   protected:
     Task * volatile tasks[TaskPriority::NUM][elemNum]; //!< All tasks currently stored
-    MutexActive mutex;                        //!< Not lock-free right now
+    typedef MutexActive MutexType;                     //!< Not lock-free right now
+	MutexType mutex;								   
     union {
       INLINE volatile int32& operator[] (int32 prio) { return x[prio]; }
       volatile int32 x[TaskPriority::NUM];
@@ -363,7 +364,7 @@ namespace pf
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::get(void) {
     if (this->getActiveMask() == 0) return NULL;
-    Lock<MutexActive> lock(this->mutex);
+    Lock<MutexType> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const uint32 prio = __bsf(mask);
@@ -378,7 +379,7 @@ namespace pf
   template<int elemNum>
   Task* TaskWorkStealingQueue<elemNum>::steal(void) {
     if (this->getActiveMask() == 0) return NULL;
-    Lock<MutexActive> lock(this->mutex);
+    Lock<MutexType> lock(this->mutex);
     const int mask = this->getActiveMask();
     if (mask == 0) return NULL;
     const uint32 prio = __bsf(mask);
@@ -395,7 +396,7 @@ namespace pf
     const uint32 prio = task.getPriority();
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
-    Lock<MutexActive> lock(this->mutex);
+    Lock<MutexType> lock(this->mutex);
     if (UNLIKELY(this->head[prio] - this->tail[prio] == elemNum))
       return false;
     __store_release(&task.state, uint8(TaskState::READY));
@@ -844,7 +845,9 @@ namespace pf
   }
 
   void TaskScheduler::go(void) {
-    ThreadStartup *thread = PF_NEW(ThreadStartup, 0, *this);
+    ThreadStartup *thread = PF_NEW(ThreadStartup, PF_TASK_MAIN_THREAD, *this);
+	// Resurrect the main thread if required
+	this->taskThread[PF_TASK_MAIN_THREAD].state = TASK_THREAD_STATE_RUNNING;
     threadFunction(thread);
   }
 
@@ -905,9 +908,10 @@ namespace pf
   }
 
   void TaskingSystemStart(int32 workerNum) {
+    static const uint32 bitsPerByte = 8;
+    FATAL_IF (workerNum >= int32(sizeof(size_t)*bitsPerByte), "Too many workers are required");
     FATAL_IF (scheduler != NULL, "scheduler is already running");
-    FATAL_IF (workerNum >= int32(sizeof(size_t)*8), "Too many workers are required");
-    // flush to zero and no denormals
+	// flush to zero and no denormals
     _mm_setcsr(_mm_getcsr() | (1<<15) | (1<<6));
     scheduler = PF_NEW(TaskScheduler, workerNum);
     allocator = PF_NEW(TaskAllocator, scheduler->getWorkerNum()+1);
