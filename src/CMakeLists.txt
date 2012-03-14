@@ -6,6 +6,7 @@ else (PF_USE_BLOB)
     utests.cpp
     sys/thread.cpp
     sys/alloc.cpp
+    sys/tasking_utility.cpp
     sys/tasking.cpp
     sys/sysinfo.cpp
     sys/mutex.cpp

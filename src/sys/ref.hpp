@@ -65,6 +65,7 @@ namespace pf
     }
 
     INLINE operator bool(void) const { return ptr != NULL; }
+    INLINE operator Type*(void) const { return ptr; }
 
     ////////////////////////////////////////////////////////////////////////////////
     /// Properties
@@ -79,18 +80,17 @@ namespace pf
     INLINE       Ref<TypeOut> cast()       { return Ref<TypeOut>(static_cast<TypeOut*>(ptr)); }
     template<typename TypeOut>
     INLINE const Ref<TypeOut> cast() const { return Ref<TypeOut>(static_cast<TypeOut*>(ptr)); }
+    PF_CLASS(Ref);
   };
 
-  template<typename Type> INLINE  bool operator< ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr <  b.ptr ; }
-
-  template<typename Type> INLINE  bool operator== ( const Ref<Type>& a, NullTy             ) { return a.ptr == NULL  ; }
-  template<typename Type> INLINE  bool operator== ( NullTy            , const Ref<Type>& b ) { return NULL  == b.ptr ; }
-  template<typename Type> INLINE  bool operator== ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr == b.ptr ; }
-
-  template<typename Type> INLINE  bool operator!= ( const Ref<Type>& a, NullTy             ) { return a.ptr != NULL  ; }
-  template<typename Type> INLINE  bool operator!= ( NullTy            , const Ref<Type>& b ) { return NULL  != b.ptr ; }
-  template<typename Type> INLINE  bool operator!= ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr != b.ptr ; }
+  template<typename Type> INLINE bool operator< ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr <  b.ptr ; }
+  template<typename Type> INLINE bool operator== ( const Ref<Type>& a, NullTy             ) { return a.ptr == NULL  ; }
+  template<typename Type> INLINE bool operator== ( NullTy            , const Ref<Type>& b ) { return NULL  == b.ptr ; }
+  template<typename Type> INLINE bool operator== ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr == b.ptr ; }
+  template<typename Type> INLINE bool operator!= ( const Ref<Type>& a, NullTy             ) { return a.ptr != NULL  ; }
+  template<typename Type> INLINE bool operator!= ( NullTy            , const Ref<Type>& b ) { return NULL  != b.ptr ; }
+  template<typename Type> INLINE bool operator!= ( const Ref<Type>& a, const Ref<Type>& b ) { return a.ptr != b.ptr ; }
 }
 
-#endif
+#endif /* __PF_REF_HPP__ */
 

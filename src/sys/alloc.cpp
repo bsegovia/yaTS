@@ -23,9 +23,13 @@
 #include <unordered_map>
 #else
 #include <tr1/unordered_map>
-#endif
+#endif /* __MSVC__ */
+#include <cstring>
 #endif /* PF_DEBUG_MEMORY */
 
+#if defined(__ICC__)
+#include <stdint.h>
+#endif /* __ICC__ */
 #include <map>
 #include <vector>
 
@@ -99,6 +103,7 @@ namespace pf
     Lock<MutexSys> lock(mutex);
     const uintptr_t iptr = (uintptr_t) ptr;
     FATAL_IF(allocMap.find(iptr) == allocMap.end(), "Pointer not referenced");
+    //if(allocMap.find(iptr) == allocMap.end()) debugbreak();
     allocMap.erase(iptr);
     unfreedNum--;
   }
@@ -118,6 +123,9 @@ namespace pf
               << " allocated static strings" << std::endl;
   }
 
+  /*! The user can deactivate the memory initialization */
+  static bool memoryInitializationEnabled = true;
+
   /*! Declare C like interface functions here */
   static MemDebugger *memDebugger = NULL;
   void* MemDebuggerInsertAlloc(void *ptr, const char *file, const char *function, int line) {
@@ -129,6 +137,12 @@ namespace pf
   }
   void MemDebuggerDumpAlloc(void) {
     if (memDebugger) memDebugger->dumpAlloc();
+  }
+  void MemDebuggerEnableMemoryInitialization(bool enabled) {
+    memoryInitializationEnabled = enabled;
+  }
+  void MemDebuggerInitializeMem(void *mem, size_t sz) {
+    if (memoryInitializationEnabled) std::memset(mem, 0xcd, sz);
   }
   void MemDebuggerStart(void) {
     if (memDebugger) MemDebuggerEnd();
@@ -145,20 +159,25 @@ namespace pf
 namespace pf
 {
   void* malloc(size_t size) {
-    return std::malloc(size);
+    void *ptr = std::malloc(size);
+    MemDebuggerInitializeMem(ptr, size);
+    return ptr;
   }
 
   void* realloc(void *ptr, size_t size) {
 #if PF_DEBUG_MEMORY
     if (ptr) MemDebuggerRemoveAlloc(ptr);
 #endif /* PF_DEBUG_MEMORY */
-    assert(size);
-    return std::realloc(ptr, size);
+    PF_ASSERT(size);
+    if (ptr == NULL) {
+      ptr = std::realloc(ptr, size);
+      MemDebuggerInitializeMem(ptr, size);
+      return ptr;
+    } else
+      return std::realloc(ptr, size);
   }
 
-  void free(void *ptr) {
-    if (ptr != NULL) std::free(ptr);
-  }
+  void free(void *ptr) { if (ptr != NULL) std::free(ptr); }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -175,12 +194,11 @@ namespace pf
   void* alignedMalloc(size_t size, size_t align) {
     void* ptr = _mm_malloc(size,align);
     FATAL_IF (!ptr && size, "memory allocation failed");
+    MemDebuggerInitializeMem(ptr, size);
     return ptr;
   }
 
-  void alignedFree(void *ptr) {
-    _mm_free(ptr);
-  }
+  void alignedFree(void *ptr) { _mm_free(ptr); }
 }
 #endif
 
@@ -201,12 +219,11 @@ namespace pf
   void* alignedMalloc(size_t size, size_t align) {
     void* ptr = memalign(align,size);
     FATAL_IF (!ptr && size, "memory allocation failed");
+    MemDebuggerInitializeMem(ptr, size);
     return ptr;
   }
 
-  void alignedFree(void *ptr) {
-    free(ptr);
-  }
+  void alignedFree(void *ptr) { free(ptr); }
 }
 
 #endif
@@ -227,11 +244,12 @@ namespace pf
     char* aligned = ((char*)mem) + sizeof(void*);
     aligned += align - ((uintptr_t)aligned & (align - 1));
     ((void**)aligned)[-1] = mem;
+    MemDebuggerInitializeMem(aligned, size);
     return aligned;
   }
 
   void alignedFree(void* ptr) {
-    assert(ptr);
+    PF_ASSERT(ptr);
     free(((void**)ptr)[-1]);
   }
 }

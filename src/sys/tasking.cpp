@@ -31,11 +31,22 @@
 // We therefore *manually* handle the extra references the scheduler may have
 // on a task. This is nasty but maintains a reasonnable speed in the system.
 // Using Ref<Task> in the queues makes the system roughly twice slower
+
+// Convenient shortcut macro for task statistics
 #if PF_TASK_STATICTICS
 #define IF_TASK_STATISTICS(EXPR) EXPR
 #else
 #define IF_TASK_STATISTICS(EXPR)
-#endif
+#endif /* PF_TASK_STATISTICS */
+
+// Convenient shortcut macro for task profiling
+#if PF_TASK_PROFILER
+#define TASK_PROFILE(PROFILER, FN, ...) do {  \
+  if (PROFILER) PROFILER->FN(__VA_ARGS__);    \
+} while (0)
+#else
+#define TASK_PROFILE(PROFILER, FN, ...) do {} while(0)
+#endif /* PF_TASK_PROFILER */
 
 namespace pf
 {
@@ -89,7 +100,7 @@ namespace pf
       volatile int32 x[TaskPriority::NUM];
       volatile __m128i v;
     } head, tail;
-    ALIGNED_CLASS;
+    PF_ALIGNED_CLASS(CACHE_LINE);
   };
 
   /*! For work stealing:
@@ -153,6 +164,7 @@ namespace pf
     TASK_THREAD_STATE_SLEEPING = 0,
     TASK_THREAD_STATE_RUNNING  = 1,
     TASK_THREAD_STATE_DEAD     = 2,
+    TASK_THREAD_STATE_OUTSIDE  = 3,
     TASK_THREAD_STATE_INVALID  = 0xffffffff
   };
 
@@ -169,11 +181,11 @@ namespace pf
      *  we know where to get the task to steal. If the ID is negative, we do not
      *  change the current victim to steal from.
      */
-    INLINE void wakeUp(int32 threadThatWakesMeUp = -1);
+    void wakeUp(int32 threadThatWakesMeUp = -1);
     /*! Check without locking the state before waking up the threads */
-    INLINE void tryWakeUp(int32 threadThatWakesMeUp = -1);
+    void tryWakeUp(int32 threadThatWakesMeUp = -1);
     /*! Yield the thread using a condition variable */
-    INLINE void sleep(void);
+    void sleep(void);
     enum { queueSize = 512 };                //!< Number of task per queue
     TaskWorkStealingQueue<queueSize> wsQueue;//!< Per thread work stealing queue
     TaskAffinityQueue<queueSize> afQueue;    //!< Per thread affinity queue
@@ -188,13 +200,15 @@ namespace pf
 #if PF_TASK_STATICTICS
     Atomic sleepNum;
 #endif /* PF_TASK_STATICTICS */
-    ALIGNED_CLASS
+    PF_ALIGNED_CLASS(CACHE_LINE);
   };
 
-  /*! Handle the scheduling of all tasks. We basically implement here a
+  /*! Handle the scheduling of all tasks. We first implement a
    *  work-stealing algorithm. Each thread has each own queue where it picks
    *  up task in depth first order. Each thread can also steal other tasks
-   *  in breadth first order when his own queue is empty
+   *  in breadth first order when his own queue is empty. Each thread also
+   *  maintains a FIFO queue that contains jobs that it is the only to run
+   *  (this is called "affinity" queue)s
    */
   class CACHE_LINE_ALIGNED TaskScheduler
   {
@@ -211,6 +225,12 @@ namespace pf
     }
     /*! Interrupt main thread only */
     INLINE void stopMain(void) { this->taskThread[PF_TASK_MAIN_THREAD].die(); }
+#if PF_TASK_PROFILER
+    /*! Set the profiler (if activated) */
+    INLINE void setProfiler(TaskProfiler *profiler_) {
+      this->profiler = profiler_;
+    }
+#endif /* PF_TASK_PROFILER */
     /*! Number of threads running in the scheduler (not including main) */
     INLINE uint32 getWorkerNum(void) { return uint32(this->workerNum); }
     /*! ID of the calling thread in the tasking system */
@@ -223,6 +243,10 @@ namespace pf
     void lock(void);
     /*! Unlock the scheduler */
     void unlock(void);
+    /*! Wait the task completion */
+    void wait(Ref<Task> task);
+    /*! Wait until all queues are empty */
+    void waitAll(void);
     /*! Data provided to each thread */
     struct ThreadStartup {
       ThreadStartup(size_t tid, TaskScheduler &scheduler_) :
@@ -244,13 +268,16 @@ namespace pf
     friend class TaskThread;      //!< Update the sleeping bitfield
     static THREAD uint32 threadID;//!< ThreadID for each thread
     TaskThread *taskThread;       //!< Per thread state
+#if PF_TASK_PROFILER
+    TaskProfiler * volatile profiler; //!< Registers events
+#endif /* PF_TASK_PROFILER */
     size_t workerNum;             //!< Total number of threads running
     size_t queueNum;              //!< Number of queues (should be workerNum+1)
     volatile size_t sleeping;     //!< Bitfields that gives the sleeping threads
     volatile size_t sleepingNum;  //!< Number of threads sleeping
     MutexActive sleepMutex;       //!< Protect the sleeping field
     CACHE_LINE_ALIGNED volatile int32 locked; //!< To globally lock the tasking system
-    ALIGNED_CLASS
+    PF_ALIGNED_CLASS(CACHE_LINE);
   };
 
   /*! Allocator per thread */
@@ -441,8 +468,8 @@ namespace pf
     int64 allocateNum = 0;
     for (size_t i = 0; i < threadNum; ++i)
       allocateNum += this->local[i].allocateNum;
-    FATAL_IF (allocateNum < 0, "** You may have deleted a task twice **");
-    FATAL_IF (allocateNum > 0, "** You may still hold a reference on a task **");
+    //FATAL_IF (allocateNum < 0, "** You may have deleted a task twice **");
+    //FATAL_IF (allocateNum > 0, "** You may still hold a reference on a task **");
     PF_DELETE_ARRAY(this->local);
   }
 
@@ -504,11 +531,16 @@ namespace pf
     Lock<MutexSys> lock(mutex);
 
     // Double check that we did not get anything to run in the mean time
-    if (afQueue.getActiveMask() || wsQueue.getActiveMask()) return;
+    // Note that we always go to sleep if the system is locked
+    if (afQueue.getActiveMask() && !scheduler->locked) return;
     if (state == TASK_THREAD_STATE_DEAD) return;
+
+    // Previous state is not necessarily RUNNING. It can be "OUTSIDE"
+    const TaskThreadState prevState = state;
     state = TASK_THREAD_STATE_SLEEPING;
 
-    // Indicate that we are now sleeping
+    // *Globally* indicate that we are now sleeping
+    TASK_PROFILE(scheduler->profiler, onSleep, threadID);
     scheduler->sleepMutex.lock();
     scheduler->sleeping |= (size_t(1u) << this->threadID);
     scheduler->sleepingNum++;
@@ -517,16 +549,21 @@ namespace pf
     while (state == TASK_THREAD_STATE_SLEEPING)
       cond.wait(mutex);
 
-    // We are not sleeping anymore
+    // We are not sleeping anymore. Return to our previous state
     scheduler->sleepMutex.lock();
     scheduler->sleepingNum--;
     scheduler->sleeping &= ~(size_t(1u) << this->threadID);
     scheduler->sleepMutex.unlock();
+
+    // We got killed
+    if (state == TASK_THREAD_STATE_DEAD) return;
+    state = prevState;
   }
 
   void TaskThread::wakeUp(int32 threadThatWakesMeUp) {
     Lock<MutexSys> lock(mutex);
     if (state == TASK_THREAD_STATE_SLEEPING) {
+      TASK_PROFILE(scheduler->profiler, onWakeUp, threadID);
       if (threadThatWakesMeUp >= 0)
         victim = threadThatWakesMeUp;
       state = TASK_THREAD_STATE_RUNNING;
@@ -624,10 +661,6 @@ namespace pf
     this->allocateNum--;
   }
 
-  // Stupid windows
-  template <typename T> INLINE T _min(T x, T y) {return x<y?x:y;}
-  template <typename T> INLINE T _max(T x, T y) {return x>y?x:y;}
-
   void TaskScheduler::threadFunction(TaskScheduler::ThreadStartup *threadData)
   {
     threadID = uint32(threadData->tid);
@@ -656,13 +689,17 @@ namespace pf
         inactivityNum = 0;
         myself.sleep();
       }
-      if (UNLIKELY(This->locked))
+      while (UNLIKELY(This->locked))
         myself.sleep();
     }
   }
 
   TaskScheduler::TaskScheduler(int workerNum_) :
-    taskThread(NULL), sleeping(0u), sleepingNum(0), locked(0)
+    taskThread(NULL),
+#if PF_TASK_PROFILER
+    profiler(NULL),
+#endif /* PF_TASK_PROFILER */      
+    sleeping(0u), sleepingNum(0), locked(0)
   {
     if (workerNum_ < 0) workerNum_ = getNumberOfLogicalThreads() - 1;
     this->workerNum = workerNum_;
@@ -673,6 +710,7 @@ namespace pf
     this->taskThread[PF_TASK_MAIN_THREAD].thread = NULL;
     this->taskThread[PF_TASK_MAIN_THREAD].scheduler = this;
     this->taskThread[PF_TASK_MAIN_THREAD].threadID = 0;
+    this->taskThread[PF_TASK_MAIN_THREAD].state = TASK_THREAD_STATE_OUTSIDE;
 
     // Only if we have dedicated worker threads
     if (workerNum > 0) {
@@ -721,7 +759,7 @@ namespace pf
   }
 
   void TaskScheduler::lock(void) {
-    // If somebody locks the system, we sleep
+    // If somebody locked the system, we sleep
     while (atomic_cmpxchg(&this->locked, 1, 0) != 0) {
       TaskThread &myself = this->taskThread[threadID];
       myself.sleep();
@@ -731,7 +769,8 @@ namespace pf
     // locking is anyway super expensive. So, let's do it like this
     while (this->sleepingNum != this->queueNum - 1) _mm_pause();
 
-    // Now we are alone in this world
+    // Now we are alone in the world now
+    TASK_PROFILE(this->profiler, onLock, threadID);
   }
 
   void TaskScheduler::unlock(void) {
@@ -743,6 +782,7 @@ namespace pf
       TaskThread &thread = this->taskThread[i];
       thread.wakeUp();
     }
+    TASK_PROFILE(this->profiler, onUnlock, threadID);
   }
 
   TaskScheduler::~TaskScheduler(void) {
@@ -803,7 +843,9 @@ namespace pf
       assert(state == TaskState::READY || state == TaskState::RUNNING);
 #endif /* NDEBUG */
       __store_release(&task->state, uint8(TaskState::RUNNING));
+      TASK_PROFILE(this->profiler, onRunStart, task->name, threadID);
       nextToRun = task->run();
+      TASK_PROFILE(this->profiler, onRunEnd, task->name, threadID);
       Task *toRelease = task;
 
       // Explore the completions and runs all continuations if any
@@ -811,6 +853,7 @@ namespace pf
         // We are done here
         if (--task->toEnd == 0) {
           __store_release(&task->state, uint8(TaskState::DONE));
+          TASK_PROFILE(this->profiler, onEnd, task->name, threadID);
           // Start the tasks if they become ready
           if (task->toBeStarted) {
             if (--task->toBeStarted->toStart == 0)
@@ -838,17 +881,68 @@ namespace pf
             nextToRun = NULL;
           }
         }
+
+        // Check dependencies. Only run a task which is ready
+        if (nextToRun && nextToRun->toStart > 1) {
+          nextToRun->scheduled();
+          nextToRun = NULL;
+        }
       }
       task = nextToRun;
       if (task) __store_release(&task->state, uint8(TaskState::READY));
     } while (task);
   }
 
-  void TaskScheduler::go(void) {
-    ThreadStartup *thread = PF_NEW(ThreadStartup, PF_TASK_MAIN_THREAD, *this);
-    // Resurrect the main thread if required
-    this->taskThread[PF_TASK_MAIN_THREAD].state = TASK_THREAD_STATE_RUNNING;
-    threadFunction(thread);
+  void TaskScheduler::go(void)
+  {
+    TaskThread &myself = this->taskThread[PF_TASK_MAIN_THREAD];
+    // Be sure that nobody already killed us before we can start
+    myself.mutex.lock();
+    const uint32 state = myself.state;
+    PF_ASSERT(state == TASK_THREAD_STATE_OUTSIDE ||
+              state == TASK_THREAD_STATE_DEAD);
+
+    // We were killed, directly exit
+    if (state == TASK_THREAD_STATE_DEAD)
+      myself.mutex.unlock();
+    // Nobody killed us. We can enter the tasking system
+    else {
+      ThreadStartup *thread = PF_NEW(ThreadStartup, PF_TASK_MAIN_THREAD, *this);
+      myself.state = TASK_THREAD_STATE_RUNNING;
+      myself.mutex.unlock();
+      threadFunction(thread);
+    }
+
+    // Properly indicate that we are not in the tasking system anymore
+    myself.mutex.lock();
+    myself.state = TASK_THREAD_STATE_OUTSIDE;
+    myself.mutex.unlock();
+  }
+
+  void TaskScheduler::wait(Ref<Task> task) {
+    TaskThread &myself = taskThread[PF_TASK_MAIN_THREAD];
+    PF_ASSERT(threadID == PF_TASK_MAIN_THREAD);
+    PF_ASSERT(myself.state == TASK_THREAD_STATE_OUTSIDE);
+    if (LIKELY(task)) {
+      while (__load_acquire(&task->state) != TaskState::DONE) {
+        Ref<Task> someTask = this->getTask();
+        if (someTask) this->runTask(someTask);
+        while (UNLIKELY(this->locked)) myself.sleep();
+      }
+    }
+  }
+
+  void TaskScheduler::waitAll(void) {
+    TaskThread &myself = taskThread[PF_TASK_MAIN_THREAD];
+    PF_ASSERT(threadID == PF_TASK_MAIN_THREAD);
+    PF_ASSERT(myself.state == TASK_THREAD_STATE_OUTSIDE);
+    for (;;) {
+      Task *task = this->getTask();
+      if (task) this->runTask(task);
+      while (UNLIKELY(this->locked)) myself.sleep();
+      if (task == NULL && this->sleepingNum == this->queueNum - 1)
+        return;
+    }
   }
 
   static TaskScheduler *scheduler = NULL;
@@ -860,9 +954,20 @@ namespace pf
   }
 
 #if PF_TASK_USE_DEDICATED_ALLOCATOR
-  void *Task::operator new(size_t size) { return allocator->allocate(size); }
+  void *Task::operator new(size_t size) {
+    FATAL_IF (allocator == NULL, "scheduler not started");
+    void *ptr = allocator->allocate(size);
+    MemDebuggerInitializeMem(ptr, size);
+    return ptr;
+  }
   void Task::operator delete(void *ptr) { allocator->deallocate(ptr); }
+#else
+  void *Task::operator new(size_t size) { return alignedMalloc(size, 16); }
+  void Task::operator delete(void *ptr) { alignedFree(ptr); }
 #endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
+  static void * const fake = NULL;
+  void* Task::operator new[](size_t size) { NOT_IMPLEMENTED; return fake; }
+  void  Task::operator delete[](void* ptr){ NOT_IMPLEMENTED; }
 
   Task* TaskSet::run(void)
   {
@@ -900,13 +1005,6 @@ namespace pf
     return NULL;
   }
 
-  void Task::waitForCompletion(void) {
-    while (__load_acquire(&this->state) != TaskState::DONE) {
-      Task *someTask = scheduler->getTask();
-      if (someTask) scheduler->runTask(someTask);
-    }
-  }
-
   void TaskingSystemStart(int32 workerNum) {
     static const uint32 bitsPerByte = 8;
     FATAL_IF (workerNum >= int32(sizeof(size_t)*bitsPerByte), "Too many workers are required");
@@ -918,9 +1016,10 @@ namespace pf
   }
 
   void TaskingSystemEnd(void) {
-    TaskingSystemInterrupt();
-    PF_SAFE_DELETE(scheduler);
-    PF_SAFE_DELETE(allocator);
+    scheduler->waitAll();      // Empty the queues (ie wait for all tasks)
+    scheduler->stopAll();      // Kill all the threads
+    PF_SAFE_DELETE(scheduler); // Deallocate the scheduler
+    PF_SAFE_DELETE(allocator); // Release the tasks allocator
     scheduler = NULL;
     allocator = NULL;
   }
@@ -930,14 +1029,29 @@ namespace pf
     scheduler->go();
   }
 
+  void TaskingSystemWait(Ref<Task> task) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->wait(task);
+  }
+
+  void TaskingSystemWaitAll(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->waitAll();
+  }
+
+  void TaskingSystemLock(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->lock();
+  }
+
+  void TaskingSystemUnlock(void) {
+    FATAL_IF (scheduler == NULL, "scheduler not started");
+    scheduler->unlock();
+  }
+
   void TaskingSystemInterruptMain(void) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
     scheduler->stopMain();
-  }
-
-  void TaskingSystemInterrupt(void) {
-    FATAL_IF (scheduler == NULL, "scheduler not started");
-    scheduler->stopAll();
   }
 
   uint32 TaskingSystemGetThreadNum(void) {
@@ -950,16 +1064,15 @@ namespace pf
     return scheduler->getThreadID();
   }
 
-  bool TaskingSystemRunAnyTask(void) {
+#if PF_TASK_PROFILER
+  void TaskingSystemSetProfiler(TaskProfiler *profiler) {
     FATAL_IF (scheduler == NULL, "scheduler not started");
-    Task *someTask = scheduler->getTask();
-    if (someTask) {
-      scheduler->runTask(someTask);
-      return true;
-    } else
-      return false;
+    TaskingSystemLock();
+    scheduler->setProfiler(profiler);
+    TaskingSystemUnlock();
   }
+#endif /* PF_TASK_PROFILER */
 }
 
 #undef IF_TASK_STATISTICS
-
+#undef IF_TASK_PROFILER

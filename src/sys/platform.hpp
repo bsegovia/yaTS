@@ -133,10 +133,6 @@
 /// Makros
 ////////////////////////////////////////////////////////////////////////////////
 
-/*! Modern x86 processors */
-#define CACHE_LINE 64
-#define CACHE_LINE_ALIGNED ALIGNED(CACHE_LINE)
-
 #ifdef __WIN32__
 #define __dllexport extern "C" __declspec(dllexport)
 #define __dllimport extern "C" __declspec(dllimport)
@@ -166,6 +162,10 @@
 #define debugbreak()    asm ("int $3")
 #endif
 
+/*! Modern x86 processors */
+#define CACHE_LINE 64
+#define CACHE_LINE_ALIGNED ALIGNED(CACHE_LINE)
+
 #ifdef __GNUC__
   #define MAYBE_UNUSED __attribute__((used))
 #else
@@ -189,7 +189,7 @@
 #define PRINT(x) std::cout << STRING(x) << " = " << (x) << std::endl
 
 /*! Branch hint */
-#define LIKELY(x)       __builtin_expect((x),1)
+#define LIKELY(x)       __builtin_expect(!!(x),1)
 #define UNLIKELY(x)     __builtin_expect((x),0)
 
 /*! Stringify macros */
@@ -197,31 +197,20 @@
 #define _DO_JOIN(X, Y) _DO_JOIN2(X, Y)
 #define _DO_JOIN2(X, Y) X##Y
 
+/*! Run-time assertion */
+#ifndef NDEBUG
+#define PF_ASSERT(EXPR) do {            \
+  if (UNLIKELY(!(EXPR))) assert(EXPR);  \
+} while (0)
+#else
+#define PF_ASSERT(EXPR) do { } while (0)
+#endif
+
 /*! Compile-time assertion */
 #define STATIC_ASSERT(value)                                     \
   struct JOIN(__,JOIN(__,__LINE__)) { int x[(value) ? 1 : -1]; }
 
 /*! Fatal error macros */
-#if defined(__WIN32__)
-namespace pf
-{
-  void Win32Fatal(const std::string&);
-} /* namespace pf */
-
-#define FATAL(MSG)                                   \
-do {                                                 \
-  std::cerr << MSG << std::endl;                     \
-  pf::Win32Fatal(MSG);                               \
-  assert(0); exit(-1);                               \
-} while (0)
-#else
-#define FATAL(MSG)                                   \
-do {                                                 \
-  std::cerr << MSG << std::endl;                     \
-  assert(0); _exit(-1);                              \
-} while (0)
-#endif /* __WIN32__ */
-
 #define NOT_IMPLEMENTED FATAL ("Not implemented")
 #define FATAL_IF(COND, MSG)                          \
 do {                                                 \
@@ -237,6 +226,33 @@ do {                                                 \
 
 /* Align X on A */
 #define ALIGN(X,A) (((X) % (A)) ? ((X) + (A) - ((X) % (A))) : (X))
+
+/*! Produce a string from the macro locatiom */
+#define HERE (STRING(__LINE__) "@" __FILE__)
+
+/*! Portable AlignOf */
+template <typename T>
+struct AlignOf
+{
+  struct Helper { char x; T t; };
+  static const size_t value = offsetof(Helper, t);
+};
+
+////////////////////////////////////////////////////////////////////////////////
+/// Visibility parameters (DLL export and so on)
+////////////////////////////////////////////////////////////////////////////////
+#if defined __WIN32__
+  #if defined __GNUC__
+    #define PF_EXPORT_SYMBOL __attribute__ ((dllexport))
+    #define PF_IMPORT_SYMBOL __attribute__ ((dllimport))
+  #else
+    #define PF_IMPORT_SYMBOL __declspec(dllimport)
+    #define PF_EXPORT_SYMBOL __declspec(dllexport)
+  #endif /* __GNUC__ */
+#else
+  #define PF_EXPORT_SYMBOL __attribute__ ((visibility ("default")))
+  #define PF_IMPORT_SYMBOL
+#endif /* __WIN32__ */
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Basic Types
@@ -268,6 +284,17 @@ typedef int64 index_t;
 typedef int32 index_t;
 #endif
 
+/*! To protect some classes from being copied */
+class NonCopyable
+{
+protected:
+  INLINE NonCopyable(void) {}
+  INLINE ~NonCopyable(void) {}
+private: 
+  INLINE NonCopyable(const NonCopyable&) {}
+  INLINE NonCopyable& operator= (const NonCopyable&) {return *this;}
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Disable some compiler warnings
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,6 +324,9 @@ namespace pf
   INLINE int   select(bool s, int   t,   int f) { return s ? t : f; }
   INLINE float select(bool s, float t, float f) { return s ? t : f; }
 
+  /*! Fatal error function */
+  void FATAL(const std::string&);
+
   /*! Return the next power of 2 */
   INLINE uint32 nextHighestPowerOf2(uint32 x) {
     x--;
@@ -322,19 +352,7 @@ namespace pf
     }
     return true;
   }
-
   template<> INLINE uint32 isPowerOf<2>(uint32 i) { return ((i-1)&i) == 0; }
-
-#define ALIGNED_STRUCT                                              \
-  void* operator new(size_t size) { return alignedMalloc(size); }   \
-  void operator delete(void* ptr) { alignedFree(ptr); }             \
-  void* operator new[](size_t size) { return alignedMalloc(size); } \
-  void operator delete[](void* ptr) { alignedFree(ptr); }           \
-
-#define ALIGNED_CLASS                                               \
-public:                                                             \
-  ALIGNED_STRUCT                                                    \
-private:
 
   /*! random functions */
   template<typename T> T   random() { return T(0); }

@@ -133,8 +133,11 @@
 /*! Store or not run-time statistics in the tasking system */
 #define PF_TASK_STATICTICS 0
 
+/*! Enable or not the profiling interface */
+#define PF_TASK_PROFILER 1
+
 /*! Give number of tries before yielding (multiplied by number of threads) */
-#define PF_TASK_TRIES_BEFORE_YIELD 8
+#define PF_TASK_TRIES_BEFORE_YIELD 64
 
 /*! Main thread (the one that the system gives us) is always 0 */
 #define PF_TASK_MAIN_THREAD 0
@@ -162,8 +165,8 @@ namespace pf
   };
 
   /*! Describe the current state of a task. This asserts the correctness of the
-   * operations (like Task::starts or Task::ends which only operates on tasks
-   * with specific states)
+   *  operations (like Task::starts or Task::ends which only operates on tasks
+   *  with specific states)
    */
   struct TaskState {
     enum {
@@ -178,7 +181,7 @@ namespace pf
   };
 
   /*! Interface for all tasks handled by the tasking system */
-  class Task : public RefCount
+  class Task : public RefCount, public NonCopyable
   {
   public:
     /*! It can complete one task and can be continued by one other task */
@@ -200,15 +203,12 @@ namespace pf
     INLINE void setAffinity(uint16 affi);
     INLINE uint8 getPriority(void) const;
     INLINE uint16 getAffinity(void) const;
-    /*! The scheduler will run tasks as long as this task is not done */
-    void waitForCompletion(void);
-
-#if PF_TASK_USE_DEDICATED_ALLOCATOR
-    /*! Tasks use a scalable fixed size allocator */
+    /*! Get the current task state */
+    INLINE uint8 getState(void) const;
+    /*! Tasks may use a scalable fixed size allocator */
     void* operator new(size_t size);
-    /*! Deallocations go through the dedicated allocator too */
+    /*! Deallocations may go through the dedicated allocator too */
     void operator delete(void* ptr);
-#endif /* PF_TASK_USE_DEDICATED_ALLOCATOR */
 
   private:
     template <int> friend struct TaskWorkStealingQueue; //!< Contains tasks
@@ -223,6 +223,8 @@ namespace pf
     uint16 affinity;           //!< The task will run on a particular thread
     uint8 priority;            //!< Task priority
     volatile uint8 state;      //!< Assert correctness of the operations
+    void* operator new[](size_t size);
+    void  operator delete[](void* ptr);
   };
 
   /*! Allow the run function to be executed several times */
@@ -233,37 +235,64 @@ namespace pf
     INLINE TaskSet(size_t elemNum, const char *name = NULL);
     /*! This function is user-specified */
     virtual void run(size_t elemID) = 0;
-
   private:
     virtual Task* run(void); //!< Reimplemented for all task sets
     Atomic elemNum;          //!< Number of outstanding elements
   };
 
-  /*! A task that runs on the main thread */
-  class TaskMain : public Task
+#if PF_TASK_PROFILER
+  /*! Callback collection to record useful events in the tasking system */
+  class TaskProfiler
   {
   public:
-    INLINE TaskMain(const char *name) : Task(name) {
-      this->setAffinity(PF_TASK_MAIN_THREAD);
-    }
+    /*! Triggered when thread threadID goes to sleep */
+    virtual void onSleep(uint32 threadID) = 0;
+    /*! Triggered when thread threadID wakes up */
+    virtual void onWakeUp(uint32 threadID) = 0;
+    /*! Triggered when thread threadID locks the tasking system */
+    virtual void onLock(uint32 threadID) = 0;
+    /*! Triggered when thread threadID unlocks the tasking system */
+    virtual void onUnlock(uint32 threadID) = 0;
+    /*! Triggered when the task run function starts to execute */
+    virtual void onRunStart(const char *taskName, uint32 threadID) = 0;
+    /*! Triggered when the task run function ends to execute */
+    virtual void onRunEnd(const char *taskName, uint32 threadID) = 0;
+    /*! Triggered when the task finishes (possibly later due to dependencies) */
+    virtual void onEnd(const char *taskName, uint32 threadID) = 0;
   };
+#endif /* PF_TASK_PROFILER */
 
   /*! Mandatory before creating and running any task. If workerNum < 0, the
-   *  number of hardware threads minus 1 is chosen (MAIN THREAD)
+   *  number of hardware threads minus 1 is chosen (MAIN THREAD outside a Task)
    */
   void TaskingSystemStart(int workerNum = -1);
 
-  /*! Make the main thread enter the tasking system (MAIN THREAD) */
+  /*! Shutdown and deallocate the tasking system (MAIN THREAD outside a Task) */
   void TaskingSystemEnd(void);
 
-  /*! Make the main thread enter the tasking system (MAIN THREAD) */
+  /*! Make the main thread enter the tasking system (MAIN THREAD outside a Task) */
   void TaskingSystemEnter(void);
 
-  /*! Signal the *main* thread only to stop (THREAD SAFE) */
-  void TaskingSystemInterruptMain(void);
+  /*! Wait for a task to complete (MAIN THREAD outside a Task) */
+  void TaskingSystemWait(Ref<Task> task);
 
-  /*! Signal *all* threads to stop (THREAD SAFE) */
-  void TaskingSystemInterrupt(void);
+  /*! Wait until all pending tasks have been executed. When the function
+   *  returns, we are sure that nothing can be run anymore (MAIN THREAD outside
+   *  a Task)
+   */
+  void TaskingSystemWaitAll(void);
+
+  /*! Lock the tasking system. After the lock, only one thread is running.
+   *  All other threads are sleeping. This is a particularly expensive
+   *  operation so use it with moderation :-)
+   */
+  void TaskingSystemLock(void);
+
+  /*! Unlock the tasking system. Basically wake up the other threads */
+  void TaskingSystemUnlock(void);
+
+  /*! Signal the main thread to return to the application (THREAD SAFE) */
+  void TaskingSystemInterruptMain(void);
 
   /*! Number of threads currently in the tasking system (*including main*) */
   uint32 TaskingSystemGetThreadNum(void);
@@ -271,10 +300,10 @@ namespace pf
   /*! Return the ID of the calling thread (between 0 and threadNum) */
   uint32 TaskingSystemGetThreadID(void);
 
-  /*! Run any task (in READY state) in the system. Can be used from a task::run
-   *  to overlap some IO for example. Return true if anything was executed
-   */
-  bool TaskingSystemRunAnyTask(void);
+#if PF_TASK_PROFILER
+  /*! Set the profiling interface (can be NULL) */
+  void TaskingSystemSetProfiler(TaskProfiler *profiler);
+#endif /* PF_TASK_PROFILER */
 
   ///////////////////////////////////////////////////////////////////////////
   /// Implementation of the inlined functions
@@ -292,20 +321,22 @@ namespace pf
   }
 
   INLINE void Task::starts(Task *other) {
+    PF_ASSERT(this->toBeStarted == false);
     if (UNLIKELY(other == NULL)) return;
-    assert(other->state == TaskState::NEW);
+    PF_ASSERT(other->state == TaskState::NEW);
     if (UNLIKELY(this->toBeStarted)) return; // already a task to start
     other->toStart++;
     this->toBeStarted = other;
   }
 
   INLINE void Task::ends(Task *other) {
+    PF_ASSERT(this->toBeEnded == false);
     if (UNLIKELY(other == NULL)) return;
 #ifndef NDEBUG
     const uint32 state = other->state;
-    assert(state == TaskState::NEW ||
-           state == TaskState::SCHEDULED ||
-           state == TaskState::RUNNING);
+    PF_ASSERT(state == TaskState::NEW ||
+              state == TaskState::SCHEDULED ||
+              state == TaskState::RUNNING);
 #endif /* NDEBUG */
     if (UNLIKELY(this->toBeEnded)) return;  // already a task to end
     other->toEnd++;
@@ -313,17 +344,18 @@ namespace pf
   }
 
   INLINE void Task::setPriority(uint8 prio) {
-    assert(this->state == TaskState::NEW);
+    PF_ASSERT(this->state == TaskState::NEW);
     this->priority = prio;
   }
 
   INLINE void Task::setAffinity(uint16 affi) {
-    assert(this->state == TaskState::NEW);
+    PF_ASSERT(this->state == TaskState::NEW);
     this->affinity = affi;
   }
 
   INLINE uint8 Task::getPriority(void)  const { return this->priority; }
   INLINE uint16 Task::getAffinity(void) const { return this->affinity; }
+  INLINE uint8 Task::getState(void)  const { return this->state; }
 
   INLINE TaskSet::TaskSet(size_t elemNum, const char *name) :
     Task(name), elemNum(elemNum) {}
