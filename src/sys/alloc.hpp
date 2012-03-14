@@ -20,6 +20,7 @@
 #include "sys/platform.hpp"
 #include <cstdlib>
 #include <new>
+#include <stdint.h> // uintptr_t
 
 namespace pf
 {
@@ -181,45 +182,6 @@ namespace pf
     INLINE bool operator!=(Allocator const& a) { return !operator==(a); }
   };
 
-  /*! A growing pool never deallocates */
-  template <typename T>
-  class GrowingPool
-  {
-  public:
-    GrowingPool(void) : current(PF_NEW(GrowingPoolElem, 1)) {}
-    ~GrowingPool(void) { PF_ASSERT(current); PF_DELETE(current); }
-    T *allocate(void) {
-      if (UNLIKELY(current->allocated == current->maxElemNum)) {
-        GrowingPoolElem *elem = PF_NEW(GrowingPoolElem, 2 * current->maxElemNum);
-        elem->next = current;
-        current = elem;
-      }
-      T *data = current->data + current->allocated++;
-      return data;
-    }
-  private:
-    /*! Chunk of elements to allocate */
-    class GrowingPoolElem
-    {
-      friend class GrowingPool;
-      GrowingPoolElem(size_t elemNum) {
-        this->data = PF_NEW_ARRAY(T, elemNum);
-        this->next = NULL;
-        this->maxElemNum = elemNum;
-        this->allocated = 0;
-      }
-      ~GrowingPoolElem(void) {
-        PF_ASSERT(this->data);
-        PF_DELETE_ARRAY(this->data);
-        if (this->next) PF_DELETE(this->next);
-      }
-      T *data;
-      GrowingPoolElem *next;
-      size_t allocated, maxElemNum;
-    };
-    GrowingPoolElem *current;
-    PF_CLASS(GrowingPool);
-  };
 } /* namespace pf */
 
 #endif /* __PF_ALLOC_HPP__ */

@@ -2,6 +2,7 @@
 #include "sys/thread.cpp"
 #include "sys/alloc.cpp"
 #include "sys/tasking.cpp"
+#include "sys/tasking_utility.cpp"
 #include "sys/sysinfo.cpp"
 #include "sys/mutex.cpp"
 #include "sys/condition.cpp"
