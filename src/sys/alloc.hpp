@@ -20,7 +20,9 @@
 #include "sys/platform.hpp"
 #include <cstdlib>
 #include <new>
+#if !defined(__MSVC__)
 #include <stdint.h> // uintptr_t
+#endif /* __MSVC__ */
 
 namespace pf
 {
