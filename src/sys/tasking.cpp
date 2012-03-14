@@ -24,7 +24,9 @@
 #include <vector>
 #include <cstdlib>
 #include <emmintrin.h>
+#if !defined(__MSVC__)
 #include <stdint.h>
+#endif /* __MSVC__ */
 
 // One important remark about reference counting. Tasks are referenced
 // counted but we do not use Ref<Task> here. This is for performance reasons.
@@ -540,7 +542,7 @@ namespace pf
     state = TASK_THREAD_STATE_SLEEPING;
 
     // *Globally* indicate that we are now sleeping
-    TASK_PROFILE(scheduler->profiler, onSleep, threadID);
+    TASK_PROFILE(scheduler->profiler, onSleep, (uint32) threadID);
     scheduler->sleepMutex.lock();
     scheduler->sleeping |= (size_t(1u) << this->threadID);
     scheduler->sleepingNum++;
@@ -563,7 +565,7 @@ namespace pf
   void TaskThread::wakeUp(int32 threadThatWakesMeUp) {
     Lock<MutexSys> lock(mutex);
     if (state == TASK_THREAD_STATE_SLEEPING) {
-      TASK_PROFILE(scheduler->profiler, onWakeUp, threadID);
+      TASK_PROFILE(scheduler->profiler, onWakeUp, (uint32) threadID);
       if (threadThatWakesMeUp >= 0)
         victim = threadThatWakesMeUp;
       state = TASK_THREAD_STATE_RUNNING;
