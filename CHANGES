@@ -1,3 +1,12 @@
+yaTS 1.0.3
+- Added a global way to yield and wake up threads. There is now a global
+  bitfield monitoring the threads currently sleeping. When a task is pushed, a
+  thread is waken up
+- Added a task profiler that can register anything
+- Added some tasking utility that allows to have multiple start and end
+  dependencies
+- Added routines to completely lock / unlock the tasking system
+
 yaTS 1.0.2
 - Changed priority order. Now affinity and work stealing queue priorities are
   interleaved
